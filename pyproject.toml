@@ -1,0 +1,23 @@
+[project]
+name = "sim2d"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [{ name = "Martin Malenicý", email = "malenma3@fel.cvut.cz" }]
+requires-python = ">=3.12"
+dependencies = [
+  "torch>=2.8.0",
+  "torch-geometric>=2.7.0",
+  "numpy>=2.3.1",
+  "matplotlib>=3.10.6",
+  "pandas>=2.3.3",
+  "tqdm>=4.67.1",
+  "h5py>=3.14.0",
+]
+
+[project.scripts]
+ball_bounce_example = "scripts:example"
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
