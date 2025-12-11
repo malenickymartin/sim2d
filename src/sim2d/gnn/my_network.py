@@ -3,7 +3,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Callable
 
-from torch_geometric.nn import HeteroConv, LayerNorm
+from torch_geometric.nn import (
+    HeteroConv,
+    LayerNorm,
+    MLP,
+    HeteroDictLinear,
+    HeteroLinear,
+    HeteroLayerNorm,
+)
 from torch_geometric.data import HeteroData
 from torch_geometric.loader import DataLoader
 
@@ -16,6 +23,7 @@ from sim2d.gnn.dataset import DatasetSim2D
 class GNNSim2D(nn.Module):
     def __init__(self):
         super().__init__()
+        self.encoder = 0
 
     def forward(self, x_dict, edge_index_dict, edge_attr_dict):
         pass
