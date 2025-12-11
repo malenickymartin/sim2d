@@ -54,6 +54,6 @@ def create_dataset(num_passes: int, save_path: Path):
 
 
 if __name__ == "__main__":
-    num_passes = sys.argv[1]
+    num_passes = int(sys.argv[1])
     save_path = Path("data/gnn_datasets/test_dataset/raw/")
     create_dataset(num_passes, save_path)
