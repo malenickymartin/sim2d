@@ -187,7 +187,7 @@ class DatasetSim2D(Dataset):
                 attrs_floor_object, dtype=torch.float32
             )
             data["floor", "contact", "object"].edge_index = torch.tensor(
-                indices_floor_object, dtype=torch.float32
+                indices_floor_object, dtype=torch.long
             ).T
             data["floor", "contact", "object"].y = torch.tensor(
                 preds_floor_object, dtype=torch.float32
