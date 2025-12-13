@@ -9,6 +9,16 @@ import h5py
 import torch
 from torch_geometric.data import Dataset, HeteroData
 
+NODE_FEATURE_DIMS = {"world": 4, "object": 6, "floor": 1}
+EDGE_FEATURE_DIMS = {"w2f": 1, "w2o": 4, "contact": 4}
+EDGE_TYPES_FULL = [
+    ("world", "w2f", "floor"),
+    ("world", "w2o", "object"),
+    ("object", "contact", "object"),
+    ("floor", "contact", "object"),
+]
+OUTPUT_FEATURE_DIMS = {"object": 3, "contact": 1}
+
 
 def norm(x: Any):
     return torch.norm(torch.tensor(x, dtype=torch.float32))
@@ -22,14 +32,14 @@ class DatasetSim2D(Dataset):
 
     def __init__(self, root: Union[str, Path]):
         super().__init__(root)
+        self.processed_files = [
+            p
+            for p in Path(self.processed_dir).iterdir()
+            if (not p.name in ("pre_filter.pt", "pre_transform.pt"))
+        ]
 
     def get(self, idx) -> HeteroData:
-        path_idx = np.argmax(idx < self.passes_steps_cs)
-        if path_idx == 0:
-            step_idx = idx
-        else:
-            step_idx = idx - self.passes_steps_cs[path_idx - 1]
-        data = torch.load(osp.join(self.processed_dir, f"data_{path_idx}_{step_idx}.pt"))
+        data = torch.load(self.processed_files[idx], weights_only=False)
         return data
 
     def len(self) -> int:
@@ -126,7 +136,7 @@ class DatasetSim2D(Dataset):
                 [[config["floor"]["restitution"][()]]], dtype=torch.float32
             )
             data["world", "w2f", "floor"].edge_attr = torch.tensor(
-                [config["floor"]["height"][()]], dtype=torch.float32
+                [[config["floor"]["height"][()]]], dtype=torch.float32
             )
             data["world", "w2f", "floor"].edge_index = torch.tensor([[0, 0]], dtype=torch.long).T
 
