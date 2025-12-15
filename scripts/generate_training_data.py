@@ -14,7 +14,7 @@ class SimulatorGenerator(sim2d.Simulator):
         newton_iters = 50
         gravity = torch.tensor([0.0, -9.81, 0.0])
         dt = 1 / np.random.randint(50, 1000)
-        sim_time = np.random.randint(100, 1000) * dt
+        sim_time = np.random.randint(50, 5000) * dt
         super().__init__(sim_time, newton_iters, gravity, dt, logging_config)
 
     def build_model(self):
@@ -46,14 +46,15 @@ class SimulatorGenerator(sim2d.Simulator):
         return super().init_state_fn(state, contacts, dt)
 
 
-def create_dataset(num_passes: int, save_path: Path):
-    for i in range(num_passes):
+def create_dataset(start_pass_idx: int, num_passes: int, save_path: Path):
+    for i in range(start_pass_idx, start_pass_idx + num_passes):
         logging_config = sim2d.LoggingConfig(False, True, save_path / f"pass_{i}.h5")
         sim = SimulatorGenerator(logging_config)
         sim.run()
 
 
 if __name__ == "__main__":
-    num_passes = int(sys.argv[1])
+    start_pass_idx = int(sys.argv[1])
+    num_passes = int(sys.argv[2])
     save_path = Path("data/gnn_datasets/test_dataset/raw/")
-    create_dataset(num_passes, save_path)
+    create_dataset(start_pass_idx, num_passes, save_path)

@@ -65,7 +65,7 @@ class Simulator(ABC):
                 with self.logger.timed_block("update_shapes"):
                     self.update_shapes(state)
         contacts, contact_log = self.collide()
-        self.logger.log_step_data(i, current_time, self.shapes, state, contact_log)
+        self.logger.log_step_data(i + 1, current_time + self.dt, self.shapes, state, contact_log)
         self.logger.close()
 
     def update_shapes(self, state):
