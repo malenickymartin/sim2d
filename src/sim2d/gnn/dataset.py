@@ -10,14 +10,17 @@ import torch
 from torch_geometric.data import Dataset, HeteroData
 
 NODE_FEATURE_DIMS = {"world": 4, "object": 6, "floor": 1}
-EDGE_FEATURE_DIMS = {"w2f": 1, "w2o": 4, "contact": 4}
-EDGE_TYPES_FULL = [
-    ("world", "w2f", "floor"),
-    ("world", "w2o", "object"),
-    ("object", "contact", "object"),
-    ("floor", "contact", "object"),
-]
-OUTPUT_FEATURE_DIMS = {"object": 3, "contact": 1}
+EDGE_FEATURE_DIMS = {
+    ("world", "w2f", "floor"): 1,
+    ("world", "w2o", "object"): 4,
+    ("object", "contact", "object"): 4,
+    ("floor", "contact", "object"): 4,
+}
+OUTPUT_FEATURE_DIMS = {
+    "object": 3,
+    ("object", "contact", "object"): 1,
+    ("floor", "contact", "object"): 1,
+}
 
 
 def norm(x: Any):
@@ -37,13 +40,14 @@ class DatasetSim2D(Dataset):
             for p in Path(self.processed_dir).iterdir()
             if (not p.name in ("pre_filter.pt", "pre_transform.pt"))
         ]
+        self.dataset_len = len(self.processed_files)
 
     def get(self, idx) -> HeteroData:
         data = torch.load(self.processed_files[idx], weights_only=False)
         return data
 
     def len(self) -> int:
-        return np.sum([1 for f in (self.root / "processed").iterdir() if f.is_file()])
+        return self.dataset_len
 
     @property
     def processed_file_names(self) -> Union[str, List[str], Tuple[str, ...]]:

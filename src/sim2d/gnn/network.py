@@ -1,200 +1,255 @@
+from typing import Callable, Any, Dict, Optional, Tuple, Union, List
+from pathlib import Path
+
 import torch
 import torch.nn as nn
-from torch_geometric.nn import HeteroConv, LayerNorm
-from torch_geometric.nn.conv import MessagePassing
+import torch.nn.functional as F
+from torch_geometric.nn import LayerNorm, MessagePassing
 from torch_geometric.data import HeteroData
+from torch_geometric.loader import DataLoader
+from tqdm import tqdm
+
+from sim2d.gnn.dataset import DatasetSim2D
+from sim2d.gnn.dataset import (
+    NODE_FEATURE_DIMS,
+    EDGE_FEATURE_DIMS,
+    OUTPUT_FEATURE_DIMS,
+)
 
 
 class MLP(nn.Module):
-    """
-    Standard MLP block for Encoders, Decoders, and Update functions.
-    Structure: Linear -> ReLU -> ... -> Linear -> LayerNorm
-    Follows architectural details from the paper[cite: 159, 164].
-    """
-
-    def __init__(self, input_size, hidden_size, output_size, num_layers=2, layernorm=True):
-        super(MLP, self).__init__()
+    def __init__(
+        self,
+        input_dims: int,
+        output_dims: int,
+        hidden_dims: int = 128,
+        hidden_layers: int = 2,
+        output_norm: bool = True,
+    ):
+        super().__init__()
         layers = []
-        layers.append(nn.Linear(input_size, hidden_size))
+        layers.append(nn.Linear(input_dims, hidden_dims))
         layers.append(nn.ReLU())
-
-        for _ in range(num_layers - 1):
-            layers.append(nn.Linear(hidden_size, hidden_size))
+        for _ in range(hidden_layers - 1):
+            layers.append(nn.Linear(hidden_dims, hidden_dims))
             layers.append(nn.ReLU())
+        layers.append(nn.Linear(hidden_dims, output_dims))
+        if output_norm:
+            layers.append(LayerNorm(output_dims))
+        self.mlp = nn.Sequential(*layers)
 
-        layers.append(nn.Linear(hidden_size, output_size))
-        if layernorm:
-            layers.append(LayerNorm(output_size))
-
-        self.net = nn.Sequential(*layers)
-
-    def forward(self, x):
-        return self.net(x)
+    def forward(self, x: torch.Tensor):
+        return self.mlp(x)
 
 
-class InteractionNetworkLayer(MessagePassing):
-    """
-    A single message-passing layer (Processor block).
-    Computes interactions (edge updates) and aggregates them to update nodes[cite: 118, 155].
-    """
+class Encoder(nn.Module):
+    def __init__(self, hidden_dims: int, hidden_layers: int, normalize: bool):
+        super().__init__()
+        self.mlp_nodes = nn.ModuleDict(
+            {
+                node_type: MLP(node_dim, hidden_dims, hidden_dims, hidden_layers, normalize)
+                for node_type, node_dim in NODE_FEATURE_DIMS.items()
+            }
+        )
+        self.mlp_edges = nn.ModuleDict(
+            {
+                "_".join(edge_type): MLP(
+                    edge_dim, hidden_dims, hidden_dims, hidden_layers, normalize
+                )
+                for edge_type, edge_dim in EDGE_FEATURE_DIMS.items()
+            }
+        )
 
-    def __init__(self, node_in_dim, edge_in_dim, hidden_dim):
-        super(InteractionNetworkLayer, self).__init__(aggr="add")  # Sum aggregation [cite: 751]
+    def forward(self, x_dict: Dict[str, torch.Tensor], edge_attr_dict: Dict[Tuple, torch.Tensor]):
+        x_dict_encoded = {}
+        for node_type, x in x_dict.items():
+            x_dict_encoded[node_type] = self.mlp_nodes[node_type](x)
+        edge_attr_dict_encoded = {}
+        for edge_type, edge_attr in edge_attr_dict.items():
+            edge_attr_dict_encoded[edge_type] = self.mlp_edges["_".join(edge_type)](edge_attr)
+        return x_dict_encoded, edge_attr_dict_encoded
 
-        # Edge update function (computes messages based on src, dst, and edge attr)
-        self.edge_mlp = MLP(node_in_dim * 2 + edge_in_dim, hidden_dim, hidden_dim)
 
-        # Node update function (updates node based on aggregated messages)
-        self.node_mlp = MLP(node_in_dim + hidden_dim, hidden_dim, hidden_dim)
+class Decoder(nn.Module):
+    def __init__(self, hidden_dims: int, hidden_layers: int):
+        super().__init__()
+        self.mlp_objects = MLP(
+            hidden_dims,
+            OUTPUT_FEATURE_DIMS["object"],
+            hidden_dims,
+            hidden_layers,
+            False,
+        )
+        self.mlp_f2o = MLP(
+            hidden_dims,
+            OUTPUT_FEATURE_DIMS[("floor", "contact", "object")],
+            hidden_dims,
+            hidden_layers,
+            False,
+        )
+        self.mlp_o2o = MLP(
+            hidden_dims,
+            OUTPUT_FEATURE_DIMS[("object", "contact", "object")],
+            hidden_dims,
+            hidden_layers,
+            False,
+        )
 
-    def forward(self, x, edge_index, edge_attr):
-        # x is a tuple (x_src, x_dst) for bipartite/hetero graphs
-        return self.propagate(edge_index, x=x, edge_attr=edge_attr)
+    def forward(self, x_dict: Dict[str, torch.Tensor], edge_attr_dict: Dict[Tuple, torch.Tensor]):
+        objects_decoded = self.mlp_objects(x_dict["object"])
+        contacts_decoded = {}
+        if ("object", "contact", "object") in edge_attr_dict:
+            contacts_decoded[("object", "contact", "object")] = self.mlp_o2o(
+                edge_attr_dict[("object", "contact", "object")]
+            )
+        if ("floor", "contact", "object") in edge_attr_dict:
+            contacts_decoded[("floor", "contact", "object")] = self.mlp_o2o(
+                edge_attr_dict[("floor", "contact", "object")]
+            )
+        return objects_decoded, contacts_decoded
 
-    def message(self, x_i, x_j, edge_attr):
-        # Concatenate receiver (i), sender (j), and edge features
-        tmp = torch.cat([x_i, x_j, edge_attr], dim=-1)
-        return self.edge_mlp(tmp)
+
+class InteractionNetwork(MessagePassing):
+    def __init__(self, hidden_dims: int, hidden_layers: int, normalize: bool, aggr: str = "add"):
+        super().__init__(aggr)
+        self.mlp_node = MLP(2 * hidden_dims, hidden_dims, hidden_dims, hidden_layers, normalize)
+        self.mlp_edge = MLP(3 * hidden_dims, hidden_dims, hidden_dims, hidden_layers, normalize)
+
+    def edge_update(self, x_i, x_j, edge_attr):
+        return self.mlp_edge(torch.cat([x_i, x_j, edge_attr], dim=-1)) + edge_attr
+
+    def message(self, edge_attr):
+        return edge_attr
 
     def update(self, aggr_out, x):
-        # x[1] is the target node features
         if isinstance(x, tuple):
             x = x[1]
-        # Update node state with aggregated messages
-        tmp = torch.cat([x, aggr_out], dim=-1)
-        return self.node_mlp(tmp)
+        return self.mlp_node(torch.cat([x, aggr_out], dim=-1)) + x
+
+    def forward(
+        self,
+        x: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
+        edge_index: torch.Tensor,
+        edge_attr: torch.Tensor,
+    ):
+        if isinstance(x, tuple):
+            size = (x[0].size(0), x[1].size(0))
+        else:
+            size = (x.size(0), x.size(0))
+        edge_attr_updated = self.edge_updater(edge_index, x=x, edge_attr=edge_attr)
+        x_updated = self.propagate(edge_index, x=x, edge_attr=edge_attr_updated, size=size)
+        return x_updated, edge_attr_updated
 
 
-class SimulatorGNN(nn.Module):
-    def __init__(self, hidden_dim=128, num_mp_steps=4):
-        super(SimulatorGNN, self).__init__()
-        self.num_mp_steps = num_mp_steps
-
-        # --- ENCODER  ---
-        # Encode raw features from dataset.py into latent vectors
-
-        # Node Encoders
-        # Inputs based on DatasetSimple:
-        # world: [dt, grav_x, grav_y, grav_z] -> 4
-        self.node_enc_world = MLP(4, hidden_dim, hidden_dim)
-        # object: [restitution, mass, vel_x, vel_y, vel_norm, ang_vel] -> 6
-        self.node_enc_object = MLP(6, hidden_dim, hidden_dim)
-        # floor: [restitution] -> 1
-        self.node_enc_floor = MLP(1, hidden_dim, hidden_dim)
-
-        # Edge Encoders
-        # w2o: [trans_x, trans_y, trans_norm, rot] -> 4
-        self.edge_enc_w2o = MLP(4, hidden_dim, hidden_dim)
-        # w2f: [height] -> 1
-        self.edge_enc_w2f = MLP(1, hidden_dim, hidden_dim)
-        # contact: [J_x, J_y, J_z, dist] -> 4
-        self.edge_enc_contact = MLP(4, hidden_dim, hidden_dim)
-
-        # --- PROCESSOR  ---
-        # Stack of M message-passing layers
+class Processor(nn.Module):
+    def __init__(self, message_passes: int, hidden_dims: int, hidden_layers: int, normalize: bool):
+        super().__init__()
         self.processor_layers = nn.ModuleList()
-        for _ in range(num_mp_steps):
-            conv = HeteroConv(
-                {
-                    ("world", "w2o", "object"): InteractionNetworkLayer(
-                        hidden_dim, hidden_dim, hidden_dim
-                    ),
-                    ("world", "w2f", "floor"): InteractionNetworkLayer(
-                        hidden_dim, hidden_dim, hidden_dim
-                    ),
-                    ("object", "contact", "object"): InteractionNetworkLayer(
-                        hidden_dim, hidden_dim, hidden_dim
-                    ),
-                    ("floor", "contact", "object"): InteractionNetworkLayer(
-                        hidden_dim, hidden_dim, hidden_dim
-                    ),
-                },
-                aggr="sum",
-            )
-            self.processor_layers.append(conv)
+        for _ in range(message_passes):
+            layer_dict = nn.ModuleDict()
+            for edge_type in EDGE_FEATURE_DIMS.keys():
+                layer_dict["_".join(edge_type)] = InteractionNetwork(
+                    hidden_dims, hidden_layers, normalize
+                )
+            self.processor_layers.append(layer_dict)
 
-        # --- DECODER  ---
-        # Decode latent features back to physical quantities
+    def forward(
+        self,
+        x_dict: Dict[str, torch.Tensor],
+        edge_index_dict: Dict[Tuple[str], torch.Tensor],
+        edge_attr_dict: Dict[Tuple[str], torch.Tensor],
+    ):
+        for layer in self.processor_layers:
+            x_res_aggr = {key: torch.zeros_like(x) for key, x in x_dict.items()}
+            for edge_type in edge_index_dict.keys():
+                src_type, _, dst_type = edge_type
+                edge_index = edge_index_dict[edge_type]
+                edge_attr = edge_attr_dict[edge_type]
+                if src_type == dst_type:
+                    x = x_dict[src_type]
+                else:
+                    x = (x_dict[src_type], x_dict[dst_type])
+                x_updated, edge_attr_updated = layer["_".join(edge_type)](x, edge_index, edge_attr)
+                edge_attr_dict[edge_type] = edge_attr_updated
+                x_res_aggr[dst_type] += x_updated - x_dict[dst_type]
+            for node_type, x_res_aggr in x_res_aggr.items():
+                x_dict[node_type] = x_dict[node_type] + x_res_aggr
+        return x_dict, edge_attr_dict
 
-        # Object Decoder: Predicts [vel_x, vel_y, ang_vel] -> 3
-        self.decoder_object = MLP(hidden_dim, hidden_dim, 3, layernorm=False)
 
-        # Contact Decoder: Predicts [lambda] -> 1
-        # Takes concatenation of: Node_src (hidden) + Node_dst (hidden) + Edge_attr (hidden)
-        self.decoder_contact = MLP(hidden_dim * 3, hidden_dim, 1, layernorm=False)
+class GNNSim2D(nn.Module):
+    def __init__(self, message_passes: int, hidden_dims: int, hidden_layers: int, normalize: bool):
+        super().__init__()
+        self.encoder = Encoder(hidden_dims, hidden_layers, normalize)
+        self.processor = Processor(message_passes, hidden_dims, hidden_layers, normalize)
+        self.decoder = Decoder(hidden_dims, hidden_layers)
 
-    def forward(self, data: HeteroData):
-        # 1. Encode Nodes
-        x_dict = {}
-        x_dict["world"] = self.node_enc_world(data["world"].x)
-        x_dict["object"] = self.node_enc_object(data["object"].x)
-        if "floor" in data.node_types:
-            x_dict["floor"] = self.node_enc_floor(data["floor"].x)
+    def forward(self, x_dict, edge_index_dict, edge_attr_dict):
+        x_dict, edge_attr_dict = self.encoder(x_dict, edge_attr_dict)
+        x_dict, edge_attr_dict = self.processor(x_dict, edge_index_dict, edge_attr_dict)
+        object_states, lambdas_dict = self.decoder(x_dict, edge_attr_dict)
+        return object_states, lambdas_dict
 
-        # 2. Encode Edges
-        edge_attr_dict = {}
-        if ("world", "w2o", "object") in data.edge_types:
-            edge_attr_dict[("world", "w2o", "object")] = self.edge_enc_w2o(
-                data["world", "w2o", "object"].edge_attr
-            )
 
-        if ("world", "w2f", "floor") in data.edge_types:
-            edge_attr_dict[("world", "w2f", "floor")] = self.edge_enc_w2f(
-                data["world", "w2f", "floor"].edge_attr
-            )
+def loss_fn(data, object_states, lambdas_dict):
+    gt_values = data["object"]["y"].flatten()
+    pred_values = object_states.flatten()
+    if ("floor", "contact", "object") in data.edge_types:
+        gt_values = torch.cat([gt_values, data[("floor", "contact", "object")].y])
+        pred_values = torch.cat(
+            [pred_values, lambdas_dict[("floor", "contact", "object")].flatten()]
+        )
+    if ("object", "contact", "object") in data.edge_types:
+        gt_values = torch.cat([gt_values, data[("object", "contact", "object")].y])
+        pred_values = torch.cat(
+            [pred_values, lambdas_dict[("object", "contact", "object")].flatten()]
+        )
+    return F.mse_loss(pred_values, gt_values)
 
-        if ("object", "contact", "object") in data.edge_types:
-            edge_attr_dict[("object", "contact", "object")] = self.edge_enc_contact(
-                data["object", "contact", "object"].edge_attr
-            )
 
-        if ("floor", "contact", "object") in data.edge_types:
-            edge_attr_dict[("floor", "contact", "object")] = self.edge_enc_contact(
-                data["floor", "contact", "object"].edge_attr
-            )
+def train(
+    model: GNNSim2D,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.LRScheduler,
+):
+    for epoch in range(EPOCHS):
+        total_loss = 0
+        pbar = tqdm(loader, desc=f"Epoch {epoch+1}/{EPOCHS}")
+        for i, data in enumerate(pbar, 1):
+            data: HeteroData = data.to(DEVICE)
+            optimizer.zero_grad()
+            states, lambdas = model(data.x_dict, data.edge_index_dict, data.edge_attr_dict)
+            loss: torch.Tensor = loss_fn(data, states, lambdas)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+            pbar.set_postfix({"loss": f"{total_loss/i:.4f}"})
+        print(f"Epoch {epoch+1} Complete. Avg Loss: {total_loss/len(loader):.6f}")
+        scheduler.step()
+        torch.save(model.state_dict(), DATASET_ROOT / "model.pt")
 
-        # 3. Processor (Message Passing)
-        for conv in self.processor_layers:
-            # Performs message passing on all edge types
-            x_dict_out = conv(x_dict, data.edge_index_dict, edge_attr_dict)
 
-            # Simple residual connection for node features [cite: 155]
-            for key in x_dict_out:
-                x_dict[key] = x_dict[key] + x_dict_out[key]
+def main():
+    model = GNNSim2D(MESSAGE_PASSES, HIDDEN_DIMS, HIDDEN_LAYERS, NORMALIZE)
+    dataset = DatasetSim2D(root=DATASET_ROOT)
+    loader = DataLoader(dataset, shuffle=True)
+    optimizer = torch.optim.SGD(model.parameters(), lr=LR_INIT, momentum=MOMENTUM)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, EPOCHS // 10, LR_GAMMA)
+    model.to(DEVICE)
+    model.train()
+    train(model, loader, optimizer, scheduler)
 
-        # 4. Decoder
 
-        # A. Object Velocity Prediction (Node-wise)
-        out_object = self.decoder_object(x_dict["object"])
-
-        # B. Contact Lambda Prediction (Edge-wise)
-        # Because 'lambda' is a property of the contact edge, we must decode
-        # using the final latent features of the connected nodes and the edge.
-        out_contact_oo = None
-        out_contact_fo = None
-
-        if ("object", "contact", "object") in data.edge_types:
-            edge_index = data["object", "contact", "object"].edge_index
-            edge_latents = edge_attr_dict[("object", "contact", "object")]
-
-            # Gather node latents for src and dst
-            src, dst = edge_index
-            x_src = x_dict["object"][src]
-            x_dst = x_dict["object"][dst]
-
-            # Concat [src, dst, edge] and decode
-            decode_input = torch.cat([x_src, x_dst, edge_latents], dim=-1)
-            out_contact_oo = self.decoder_contact(decode_input)
-
-        if ("floor", "contact", "object") in data.edge_types:
-            edge_index = data["floor", "contact", "object"].edge_index
-            edge_latents = edge_attr_dict[("floor", "contact", "object")]
-
-            src, dst = edge_index
-            x_src = x_dict["floor"][src]
-            x_dst = x_dict["object"][dst]
-
-            decode_input = torch.cat([x_src, x_dst, edge_latents], dim=-1)
-            out_contact_fo = self.decoder_contact(decode_input)
-
-        return out_object, out_contact_oo, out_contact_fo
+if __name__ == "__main__":
+    MESSAGE_PASSES = 10
+    HIDDEN_LAYERS = 2
+    HIDDEN_DIMS = 128
+    NORMALIZE = False
+    LR_INIT = 1e-4
+    LR_GAMMA = 0.5
+    MOMENTUM = 0.9
+    EPOCHS = 100
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    DATASET_ROOT = Path("data/gnn_datasets/test_dataset")
+    main()
