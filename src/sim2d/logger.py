@@ -23,6 +23,7 @@ from .shapes import shape_to_int
 class LoggingConfig:
     enable_timing: bool = True
     enable_hdf5: bool = False
+    enable_detailed_hdf5: bool = False
     log_file: str = "simulation_log.h5"
 
 
@@ -119,33 +120,28 @@ class EngineLogger:
             self.timings[name] = []
         self.timings[name].append(duration_ms)
 
-    def log_init_config(
-        self,
-        shapes: list[Shape],
-        floor: Union[None, Floor],
-        gravity: torch.Tensor,
-        dt: float,
-    ):
+    def log_init_config(self, sim):
         if not self.hdf5_logger:
             return
 
         with self.hdf5_logger.scope("init_config"):
-            self.hdf5_logger.log_data("num_shapes", len(shapes))
-            self.hdf5_logger.log_data("shape_types", [shape_to_int(s) for s in shapes])
-            self.hdf5_logger.log_data("masses", [s.mass for s in shapes])
-            self.hdf5_logger.log_data("restitutions", [s.restitution for s in shapes])
+            self.hdf5_logger.log_data("num_shapes", len(sim.shapes))
+            self.hdf5_logger.log_data("shape_types", [shape_to_int(s) for s in sim.shapes])
+            self.hdf5_logger.log_data("masses", [s.mass for s in sim.shapes])
+            self.hdf5_logger.log_data("restitutions", [s.restitution for s in sim.shapes])
             radii = []
-            for s in shapes:
+            for s in sim.shapes:
                 radii.append(getattr(s, "radius", 0.0))
             self.hdf5_logger.log_data("radii", radii)
 
-            self.hdf5_logger.log_data("gravity", gravity)
-            self.hdf5_logger.log_data("dt", dt)
+            self.hdf5_logger.log_data("gravity", sim.gravity)
+            self.hdf5_logger.log_data("dt", sim.dt)
+            self.hdf5_logger.log_data("newton_iters", sim.newton_iters)
             with self.hdf5_logger.scope("floor"):
-                if not floor is None:
+                if not sim.floor is None:
                     self.hdf5_logger.log_data("active", True)
-                    self.hdf5_logger.log_data("restitution", floor.restitution)
-                    self.hdf5_logger.log_data("height", floor.height)
+                    self.hdf5_logger.log_data("restitution", sim.floor.restitution)
+                    self.hdf5_logger.log_data("height", sim.floor.height)
                 else:
                     self.hdf5_logger.log_data("active", False)
 
@@ -173,6 +169,28 @@ class EngineLogger:
                 self.hdf5_logger.log_data("indices", contact_log["indices"])
                 self.hdf5_logger.log_data("distances", contact_log["distances"])
                 self.hdf5_logger.log_data("Js", contact_log["Js"])
+
+    def log_engine_data(
+        self,
+        step: int,
+        newton_step: int,
+        shape: torch.Tensor,
+        res: torch.Tensor,
+        delta: torch.Tensor,
+        J: torch.Tensor,
+    ):
+        if not self.hdf5_logger or not self.config.enable_detailed_hdf5:
+            return
+
+        with self.hdf5_logger.scope(f"step_{step:04d}"):
+            with self.hdf5_logger.scope("engine_data"):
+                with self.hdf5_logger.scope(f"newton_step_{newton_step:04d}"):
+                    self.hdf5_logger.log_data("J", J)
+                    self.hdf5_logger.log_data("J_cond", torch.linalg.cond(J))
+                    self.hdf5_logger.log_data("res", res.reshape(shape))
+                    self.hdf5_logger.log_data(
+                        "delta", delta.reshape(shape) if len(delta) > 0 else delta
+                    )
 
     def print_timings(self):
         if not self.timings:

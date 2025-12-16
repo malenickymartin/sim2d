@@ -47,7 +47,7 @@ class Simulator(ABC):
 
     def run(self):
         self.logger.open()
-        self.logger.log_init_config(self.shapes, self.floor, self.gravity, self.dt)
+        self.logger.log_init_config(self)
 
         state = torch.zeros((self.num_shapes, 3))
         for i in range(self.num_shapes):
@@ -61,7 +61,7 @@ class Simulator(ABC):
                     contacts, contact_log = self.collide()
                 self.logger.log_step_data(i, current_time, self.shapes, state, contact_log)
                 with self.logger.timed_block("physics_step"):
-                    state = self.solver.step(state, contacts)
+                    state = self.solver.step(i, state, contacts)
                 with self.logger.timed_block("update_shapes"):
                     self.update_shapes(state)
         contacts, contact_log = self.collide()
