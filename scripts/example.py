@@ -17,6 +17,6 @@ class SimulatorExample(sim2d.Simulator):
         return super().init_state_fn(state, contacts, dt)
 
 
-log_conf = sim2d.LoggingConfig(True, True, "data/log.h5")
-sim = SimulatorExample(1.0, 300, log_conf)
+log_conf = sim2d.LoggingConfig(True, True, True, "data/log.h5")
+sim = SimulatorExample(0.45, 50, log_conf)
 sim.run()

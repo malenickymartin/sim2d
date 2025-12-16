@@ -233,7 +233,7 @@ def train(
 def main():
     model = GNNSim2D(MESSAGE_PASSES, HIDDEN_DIMS, HIDDEN_LAYERS, NORMALIZE)
     dataset = DatasetSim2D(root=DATASET_ROOT)
-    loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+    loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=WORKERS)
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR_INIT)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, EPOCHS)
     model.to(DEVICE)
@@ -249,6 +249,7 @@ if __name__ == "__main__":
     LR_INIT = 1e-3
     BATCH_SIZE = 64
     EPOCHS = 100
+    WORKERS = 16
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     DATASET_ROOT = Path("data/gnn_datasets/test_dataset")
     main()

@@ -19,14 +19,16 @@ class SimulatorGenerator(sim2d.Simulator):
         super().__init__(sim_time, newton_iters, gravity, dt, logging_config)
 
     def build_model(self):
-        self.floor = sim2d.Floor(0.0, np.random.random())
+        self.floor = sim2d.Floor(np.random.uniform(-1.0, 1.0), np.random.random())
         num_shapes = np.random.randint(1, 13)
         max_attempts = 1000
         shapes_placed = 0
         max_collision = 0.05
         attempts = 0
         while (shapes_placed < num_shapes) and (attempts < max_attempts):
-            translation = torch.tensor(np.random.uniform(-0.1, 2.5, 2))
+            translation = torch.tensor(
+                np.random.uniform(self.floor.height - 0.1, self.floor.height + 2.5, 2)
+            )
             rotation = torch.tensor(np.random.uniform(0, 2 * np.pi))
             velocity = torch.tensor(np.random.uniform(-1.0, 1.0, 2))
             angular_velocity = torch.tensor(np.random.uniform(-np.pi / 2, np.pi / 2))
@@ -38,6 +40,7 @@ class SimulatorGenerator(sim2d.Simulator):
                 radius = np.random.uniform(0.05, 0.5)
                 shape = sim2d.Circle(translation, velocity, mass, restitution, radius)
             contacts = [sim2d.compute_collision(shape, s)[1] for s in self.shapes]
+            contacts.append(sim2d.compute_collision(shape, self.floor)[1])
             attempts += 1
             if (len(contacts) == 0) or (max(contacts) < max_collision):
                 self.shapes.append(shape)
