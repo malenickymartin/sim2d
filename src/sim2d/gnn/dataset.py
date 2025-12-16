@@ -34,10 +34,7 @@ class DatasetSim2D(Dataset):
     """
 
     def __init__(self, root: Union[str, Path], overwite_data: bool = True):
-        if overwite_data:
-            self.processed_file_names = []
-        else:
-            self.processed_file_names = ["data_0_0.pt"]
+        self.overwrite_data = overwite_data
         super().__init__(root)
         self.processed_files = [
             p
@@ -49,6 +46,14 @@ class DatasetSim2D(Dataset):
     def get(self, idx) -> HeteroData:
         data = torch.load(self.processed_files[idx], weights_only=False)
         return data
+
+    @property
+    def processed_file_names(self):
+        if self.overwrite_data:
+            return []
+        else:
+            return "data_0_0.pt"
+
 
     def len(self) -> int:
         return self.dataset_len

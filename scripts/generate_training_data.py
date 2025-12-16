@@ -52,7 +52,7 @@ class SimulatorGenerator(sim2d.Simulator):
 
 def create_dataset(start_pass_idx: int, num_passes: int, dataset_path: Path):
     for i in range(start_pass_idx, start_pass_idx + num_passes):
-        logging_config = sim2d.LoggingConfig(False, True, dataset_path / f"pass_{i}.h5")
+        logging_config = sim2d.LoggingConfig(False, True, False, dataset_path / "raw" / f"pass_{i}.h5")
         sim = SimulatorGenerator(logging_config)
         sim.run()
 
@@ -62,4 +62,3 @@ if __name__ == "__main__":
     num_passes = int(sys.argv[2])
     dataset_path = Path(sys.argv[3])
     create_dataset(start_pass_idx, num_passes, dataset_path)
-    DatasetSim2D(dataset_path, True)
