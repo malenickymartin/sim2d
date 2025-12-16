@@ -234,8 +234,8 @@ def main():
     model = GNNSim2D(MESSAGE_PASSES, HIDDEN_DIMS, HIDDEN_LAYERS, NORMALIZE)
     dataset = DatasetSim2D(root=DATASET_ROOT)
     loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
-    optimizer = torch.optim.SGD(model.parameters(), lr=LR_INIT, momentum=MOMENTUM)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, EPOCHS // 10, LR_GAMMA)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR_INIT)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, EPOCHS)
     model.to(DEVICE)
     model.train()
     train(model, loader, optimizer, scheduler)
@@ -246,10 +246,8 @@ if __name__ == "__main__":
     HIDDEN_LAYERS = 2
     HIDDEN_DIMS = 128
     NORMALIZE = False
-    LR_INIT = 1e-4
-    LR_GAMMA = 0.5
-    MOMENTUM = 0.9
-    BATCH_SIZE = 32
+    LR_INIT = 1e-3
+    BATCH_SIZE = 64
     EPOCHS = 100
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     DATASET_ROOT = Path("data/gnn_datasets/test_dataset")
