@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Tuple, Union, Any
+from typing import Union, Any
 import os.path as osp
 
 import numpy as np
@@ -33,7 +33,11 @@ class DatasetSim2D(Dataset):
         root: path to directory containing HDF5 files for multiple passes
     """
 
-    def __init__(self, root: Union[str, Path]):
+    def __init__(self, root: Union[str, Path], overwite_data: bool = True):
+        if overwite_data:
+            self.processed_file_names = []
+        else:
+            self.processed_file_names = ["data_0_0.pt"]
         super().__init__(root)
         self.processed_files = [
             p
@@ -48,10 +52,6 @@ class DatasetSim2D(Dataset):
 
     def len(self) -> int:
         return self.dataset_len
-
-    @property
-    def processed_file_names(self) -> Union[str, List[str], Tuple[str, ...]]:
-        return "data_0_0.pt"
 
     def process(self) -> None:
         self.passes_paths = []
