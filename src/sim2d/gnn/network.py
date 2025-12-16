@@ -8,6 +8,7 @@ from torch_geometric.nn import LayerNorm, MessagePassing
 from torch_geometric.data import HeteroData
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
+import wandb
 
 from sim2d.gnn.dataset import DatasetSim2D
 from sim2d.gnn.dataset import (
@@ -212,44 +213,72 @@ def train(
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler.LRScheduler,
+    config: dict,
 ):
-    for epoch in range(EPOCHS):
+    for epoch in range(config["epochs"]):
         total_loss = 0
-        pbar = tqdm(loader, desc=f"Epoch {epoch+1}/{EPOCHS}")
+        pbar = tqdm(loader, desc=f"Epoch {epoch+1}/{config["epochs"]}")
         for i, data in enumerate(pbar, 1):
-            data: HeteroData = data.to(DEVICE)
+            data: HeteroData = data.to(config["device"])
             optimizer.zero_grad()
             states, lambdas = model(data.x_dict, data.edge_index_dict, data.edge_attr_dict)
             loss: torch.Tensor = loss_fn(data, states, lambdas)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
+            wandb.log({"batch_loss": loss.item()})
             pbar.set_postfix({"loss": f"{total_loss/i:.4f}"})
         print(f"Epoch {epoch+1} Complete. Avg Loss: {total_loss/len(loader):.6f}")
+        wandb.log(
+            {
+                "epoch": epoch + 1,
+                "epoch_loss": total_loss / len(loader),
+                "learning_rate": scheduler.get_last_lr()[0],
+            }
+        )
+        wandb.save(str(config["dataset_root"]))
         scheduler.step()
-        torch.save(model.state_dict(), DATASET_ROOT / "model.pt")
+        torch.save(model.state_dict(), config["dataset_root"] / "model.pt")
 
 
-def main():
-    model = GNNSim2D(MESSAGE_PASSES, HIDDEN_DIMS, HIDDEN_LAYERS, NORMALIZE)
-    dataset = DatasetSim2D(root=DATASET_ROOT, overwite_data=False)
-    loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=WORKERS)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=LR_INIT)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, EPOCHS)
-    model.to(DEVICE)
+def main(config):
+    wandb.init(
+        project="sim2d-gnn",
+        config=config,
+        # mode="disabled"
+    )
+    model = GNNSim2D(
+        config["message_passes"],
+        config["hidden_dims"],
+        config["hidden_layers"],
+        config["normalize"],
+    )
+    wandb.watch(model, log="all", log_freq=10)
+    dataset = DatasetSim2D(root=config["dataset_root"], overwite_data=False)
+    loader = DataLoader(
+        dataset, batch_size=config["batch_size"], shuffle=True, num_workers=config["workers"]
+    )
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr_init"])
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, config["epochs"])
+    model.to(config["device"])
     model.train()
-    train(model, loader, optimizer, scheduler)
+    try:
+        train(model, loader, optimizer, scheduler, config)
+    finally:
+        wandb.finish()
 
 
 if __name__ == "__main__":
-    MESSAGE_PASSES = 10
-    HIDDEN_LAYERS = 2
-    HIDDEN_DIMS = 128
-    NORMALIZE = False
-    LR_INIT = 1e-3
-    BATCH_SIZE = 64
-    EPOCHS = 100
-    WORKERS = 16
-    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    DATASET_ROOT = Path("data/gnn_datasets/train_dataset")
-    main()
+    config = {
+        "message_passes": 10,
+        "hidden_layers": 2,
+        "hidden_dims": 128,
+        "normalize": False,
+        "lr_init": 1e-3,
+        "batch_size": 64,
+        "epochs": 100,
+        "workers": 16,
+        "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+        "dataset_root": Path("data/gnn_datasets/test_dataset"),
+    }
+    main(config)

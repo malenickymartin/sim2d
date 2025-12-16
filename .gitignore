@@ -1,6 +1,7 @@
 data/*
 **/__pycache__/
 .vscode
+wandb/
 
 !**/.gitkeep
 **/*.egg-info
