@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Union, Any
 import os.path as osp
+import sys
 
 import numpy as np
 from tqdm import tqdm
@@ -53,7 +54,6 @@ class DatasetSim2D(Dataset):
             return []
         else:
             return "data_0_0.pt"
-
 
     def len(self) -> int:
         return self.dataset_len
@@ -206,4 +206,4 @@ class DatasetSim2D(Dataset):
 
 
 if __name__ == "__main__":
-    DatasetSim2D(root="data/gnn_datasets/test_dataset")
+    DatasetSim2D(root=sys.argv[1])

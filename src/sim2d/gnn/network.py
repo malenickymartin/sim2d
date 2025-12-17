@@ -1,17 +1,10 @@
-from typing import Callable, Any, Dict, Optional, Tuple, Union, List
-from pathlib import Path
+from typing import Dict, Tuple, Union
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch_geometric.nn import LayerNorm, MessagePassing
-from torch_geometric.data import HeteroData
-from torch_geometric.loader import DataLoader
-from tqdm import tqdm
-import wandb
 
-from sim2d.gnn.dataset import DatasetSim2D
-from sim2d.gnn.dataset import (
+from .dataset import (
     NODE_FEATURE_DIMS,
     EDGE_FEATURE_DIMS,
     OUTPUT_FEATURE_DIMS,
@@ -190,95 +183,3 @@ class GNNSim2D(nn.Module):
         x_dict, edge_attr_dict = self.processor(x_dict, edge_index_dict, edge_attr_dict)
         object_states, lambdas_dict = self.decoder(x_dict, edge_attr_dict)
         return object_states, lambdas_dict
-
-
-def loss_fn(data, object_states, lambdas_dict):
-    gt_values = data["object"].y.flatten()
-    pred_values = object_states.flatten()
-    if ("floor", "contact", "object") in data.edge_types:
-        gt_values = torch.cat([gt_values, data[("floor", "contact", "object")].y])
-        pred_values = torch.cat(
-            [pred_values, lambdas_dict[("floor", "contact", "object")].flatten()]
-        )
-    if ("object", "contact", "object") in data.edge_types:
-        gt_values = torch.cat([gt_values, data[("object", "contact", "object")].y])
-        pred_values = torch.cat(
-            [pred_values, lambdas_dict[("object", "contact", "object")].flatten()]
-        )
-    return F.mse_loss(pred_values, gt_values)
-
-
-def train(
-    model: GNNSim2D,
-    loader: DataLoader,
-    optimizer: torch.optim.Optimizer,
-    scheduler: torch.optim.lr_scheduler.LRScheduler,
-    config: dict,
-):
-    for epoch in range(config["epochs"]):
-        total_loss = 0
-        pbar = tqdm(loader, desc=f"Epoch {epoch+1}/{config["epochs"]}")
-        for i, data in enumerate(pbar, 1):
-            data: HeteroData = data.to(config["device"])
-            optimizer.zero_grad()
-            states, lambdas = model(data.x_dict, data.edge_index_dict, data.edge_attr_dict)
-            loss: torch.Tensor = loss_fn(data, states, lambdas)
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item()
-            wandb.log({"batch_loss": loss.item()})
-            pbar.set_postfix({"loss": f"{total_loss/i:.4f}"})
-        print(f"Epoch {epoch+1} Complete. Avg Loss: {total_loss/len(loader):.6f}")
-        wandb.log(
-            {
-                "epoch": epoch + 1,
-                "epoch_loss": total_loss / len(loader),
-                "learning_rate": scheduler.get_last_lr()[0],
-            }
-        )
-        wandb.save(str(config["dataset_root"]))
-        scheduler.step()
-        torch.save(model.state_dict(), config["dataset_root"] / "model.pt")
-
-
-def main(config):
-    wandb.init(
-        project="sim2d-gnn",
-        config=config,
-        # mode="disabled"
-    )
-    model = GNNSim2D(
-        config["message_passes"],
-        config["hidden_dims"],
-        config["hidden_layers"],
-        config["normalize"],
-    )
-    wandb.watch(model, log="all", log_freq=10)
-    dataset = DatasetSim2D(root=config["dataset_root"], overwite_data=False)
-    loader = DataLoader(
-        dataset, batch_size=config["batch_size"], shuffle=True, num_workers=config["workers"]
-    )
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr_init"])
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, config["epochs"])
-    model.to(config["device"])
-    model.train()
-    try:
-        train(model, loader, optimizer, scheduler, config)
-    finally:
-        wandb.finish()
-
-
-if __name__ == "__main__":
-    config = {
-        "message_passes": 10,
-        "hidden_layers": 2,
-        "hidden_dims": 128,
-        "normalize": False,
-        "lr_init": 1e-3,
-        "batch_size": 64,
-        "epochs": 100,
-        "workers": 16,
-        "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-        "dataset_root": Path("data/gnn_datasets/test_dataset"),
-    }
-    main(config)
