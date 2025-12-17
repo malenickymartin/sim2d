@@ -1,4 +1,5 @@
 import argparse
+import sys
 import torch
 from torch_geometric.data import HeteroData
 import networkx as nx
@@ -176,5 +177,5 @@ def visualize_hetero_graph(file_path):
 
 
 if __name__ == "__main__":
-    path = "data/gnn_datasets/test_dataset/processed/data_0_75.pt"
+    path = sys.argv[1]
     visualize_hetero_graph(path)

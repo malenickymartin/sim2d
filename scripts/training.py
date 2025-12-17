@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 import torch
@@ -98,7 +99,6 @@ def train(
         print(f"Epoch {epoch+1} Complete. Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
         wandb.log(
             {
-                "epoch": epoch + 1,
                 "train_loss": train_loss,
                 "val_loss": val_loss,
                 "learning_rate": scheduler.get_last_lr()[0],
@@ -112,14 +112,12 @@ def train(
 
 
 def main(config):
-    wandb.init(project="sim2d-gnn", config=config, mode="online" if config["wandb"] else "disabled")
     model = GNNSim2D(
         config["message_passes"],
         config["hidden_dims"],
         config["hidden_layers"],
         config["normalize"],
     )
-    wandb.watch(model, log="all", log_freq=10)
     train_dataset = DatasetSim2D(root=config["dataset_root"] / "train_dataset", overwite_data=False)
     val_dataset = DatasetSim2D(root=config["dataset_root"] / "val_dataset", overwite_data=False)
     train_loader = DataLoader(
@@ -131,6 +129,14 @@ def main(config):
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr_init"])
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, config["epochs"])
     model.to(config["device"])
+    wandb.init(project="sim2d-gnn", config=config, mode="online" if config["wandb"] else "disabled")
+    wandb.watch(model, log="all", log_freq=10)
+    wandb.config.update(
+        {
+            "optimizer_type": optimizer.__class__.__name__,
+            "scheduler_type": scheduler.__class__.__name__,
+        }
+    )
     try:
         train(model, train_loader, val_loader, optimizer, scheduler, config)
     finally:
@@ -138,17 +144,30 @@ def main(config):
 
 
 if __name__ == "__main__":
-    config = {
-        "message_passes": 10,
-        "hidden_layers": 2,
-        "hidden_dims": 128,
-        "normalize": False,
-        "lr_init": 1e-3,
-        "batch_size": 64,
-        "epochs": 100,
-        "workers": 16,
-        "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-        "dataset_root": Path("data/gnn_datasets/"),
-        "wandb": True,
-    }
+    parser = argparse.ArgumentParser(description="Train GNN Sim2D")
+
+    parser.add_argument("--message_passes", type=int, default=5)
+    parser.add_argument("--hidden_layers", type=int, default=2)
+    parser.add_argument("--hidden_dims", type=int, default=128)
+    parser.add_argument("--normalize", action="store_true", default=False)
+
+    parser.add_argument("--lr_init", type=float, default=1e-3)
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--epochs", type=int, default=100)
+
+    parser.add_argument("--workers", type=int, default=16)
+    parser.add_argument("--device", type=str, default=None)
+    parser.add_argument("--dataset_root", type=Path, default=Path("data/gnn_datasets/"))
+
+    parser.add_argument("--no_wandb", action="store_false", dest="wandb")
+    parser.set_defaults(wandb=True)
+
+    args = parser.parse_args()
+    config = vars(args)
+
+    if config["device"] is None:
+        config["device"] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        config["device"] = torch.device(config["device"])
+
     main(config)
