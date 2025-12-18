@@ -118,8 +118,8 @@ def main(config):
         config["hidden_layers"],
         config["normalize"],
     )
-    train_dataset = DatasetSim2D(root=config["dataset_root"] / "train_dataset", overwite_data=False)
-    val_dataset = DatasetSim2D(root=config["dataset_root"] / "val_dataset", overwite_data=False)
+    train_dataset = DatasetSim2D(root=config["dataset_root"] / "train_dataset")
+    val_dataset = DatasetSim2D(root=config["dataset_root"] / "val_dataset")
     train_loader = DataLoader(
         train_dataset, batch_size=config["batch_size"], shuffle=True, num_workers=config["workers"]
     )
@@ -130,7 +130,6 @@ def main(config):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, config["epochs"])
     model.to(config["device"])
     wandb.init(project="sim2d-gnn", config=config, mode="online" if config["wandb"] else "disabled")
-    wandb.watch(model, log="all", log_freq=10)
     wandb.config.update(
         {
             "optimizer_type": optimizer.__class__.__name__,
@@ -169,5 +168,6 @@ if __name__ == "__main__":
         config["device"] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         config["device"] = torch.device(config["device"])
+    print(f"Running on {config["device"]}.")
 
     main(config)

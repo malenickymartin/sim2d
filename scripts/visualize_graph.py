@@ -6,11 +6,12 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
+from sim2d import DatasetSim2D
 
-def visualize_hetero_graph(file_path):
+def visualize_hetero_graph(file_path, idx):
     # 1. Load the data
     try:
-        data = torch.load(file_path, weights_only=False)
+        data = DatasetSim2D(file_path)[idx]
     except FileNotFoundError:
         print(f"Error: File not found at {file_path}")
         return
@@ -178,4 +179,5 @@ def visualize_hetero_graph(file_path):
 
 if __name__ == "__main__":
     path = sys.argv[1]
-    visualize_hetero_graph(path)
+    idx = int(sys.argv[2])
+    visualize_hetero_graph(path, idx)

@@ -8,7 +8,7 @@ from tqdm import tqdm
 import h5py
 
 import torch
-from torch_geometric.data import Dataset, HeteroData
+from torch_geometric.data import InMemoryDataset, HeteroData
 
 NODE_FEATURE_DIMS = {"world": 4, "object": 6, "floor": 1}
 EDGE_FEATURE_DIMS = {
@@ -28,59 +28,41 @@ def norm(x: Any):
     return torch.norm(torch.tensor(x, dtype=torch.float32))
 
 
-class DatasetSim2D(Dataset):
+class DatasetSim2D(InMemoryDataset):
     """
     Args:
         root: path to directory containing HDF5 files for multiple passes
     """
 
-    def __init__(self, root: Union[str, Path], overwite_data: bool = True):
-        self.overwrite_data = overwite_data
+    def __init__(self, root: Union[str, Path]):
         super().__init__(root)
-        self.processed_files = [
-            p
-            for p in Path(self.processed_dir).iterdir()
-            if (not p.name in ("pre_filter.pt", "pre_transform.pt"))
-        ]
-        self.dataset_len = len(self.processed_files)
-
-    def get(self, idx) -> HeteroData:
-        data = torch.load(self.processed_files[idx], weights_only=False)
-        return data
+        self.load(self.processed_paths[0], HeteroData)
 
     @property
     def processed_file_names(self):
-        if self.overwrite_data:
-            return []
-        else:
-            return "data_0_0.pt"
-
-    def len(self) -> int:
-        return self.dataset_len
+        return ["data.pt"]
 
     def process(self) -> None:
-        self.passes_paths = []
-        self.passes_steps = []
+        passes_paths = []
+        passes_steps = []
         raw_path = Path(self.raw_dir)
         for path in raw_path.iterdir():
             if path.suffix == ".h5":
-                self.passes_paths.append(path)
+                passes_paths.append(path)
                 with h5py.File(path, "r") as f:
-                    self.passes_steps.append(
+                    passes_steps.append(
                         len([k for k in f.keys() if k.startswith("step_")]) - 1
                     )  # cannot use last step, because we dont have prediction for it
-        self.passes_steps_cs = np.cumsum(self.passes_steps)
-
-        for path_idx in tqdm(range(len(self.passes_paths))):
-            for step_idx in range(self.passes_steps[path_idx]):
-                with h5py.File(self.passes_paths[path_idx], "r") as f:
+        graphs = []
+        for path_idx in tqdm(range(len(passes_paths))):
+            for step_idx in range(passes_steps[path_idx]):
+                with h5py.File(passes_paths[path_idx], "r") as f:
                     config = f["init_config"]
                     step = f[f"step_{step_idx:04d}"]
                     step_next = f[f"step_{step_idx+1:04d}"]
                     graph = self.construct_graph(config, step, step_next)
-                    torch.save(
-                        graph, osp.join(self.processed_dir, f"data_{path_idx}_{step_idx}.pt")
-                    )
+                    graphs.append(graph)
+        self.save(graphs, self.processed_paths[0])
 
     def construct_graph(
         self, config: h5py.Group, step: h5py.Group, step_next: h5py.Group
