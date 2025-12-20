@@ -1,22 +1,19 @@
 from pathlib import Path
 import sys
-
+import os
 import torch
 import numpy as np
+from h5py import File
 
 import sim2d
-from sim2d.gnn import DatasetSim2D
-
-np.random.seed(0)
-
 
 class SimulatorGenerator(sim2d.Simulator):
     def __init__(self, logging_config):
-        newton_iters = 50
+        newton_iters = 100
         gravity = torch.tensor([0.0, -9.81, 0.0])
-        dt = 1 / np.random.randint(50, 500)
-        sim_time = np.random.randint(50, 500) * dt
-        super().__init__(sim_time, newton_iters, gravity, dt, logging_config)
+        dt = 1 / np.random.randint(20, 200)
+        sim_time = np.random.randint(20, 100) * dt
+        super().__init__(sim_time, newton_iters, gravity, dt, logging_config=logging_config)
 
     def build_model(self):
         self.floor = sim2d.Floor(np.random.uniform(-1.0, 1.0), np.random.random())
@@ -26,9 +23,7 @@ class SimulatorGenerator(sim2d.Simulator):
         max_collision = 0.05
         attempts = 0
         while (shapes_placed < num_shapes) and (attempts < max_attempts):
-            translation = torch.tensor(
-                np.random.uniform(self.floor.height - 0.1, self.floor.height + 2.5, 2)
-            )
+            translation = torch.tensor([np.random.uniform(-1.0, 1.0), np.random.uniform(self.floor.height - 0.1, self.floor.height + 1.5)])
             rotation = torch.tensor(np.random.uniform(0, 2 * np.pi))
             velocity = torch.tensor(np.random.uniform(-1.0, 1.0, 2))
             angular_velocity = torch.tensor(np.random.uniform(-np.pi / 2, np.pi / 2))
@@ -49,12 +44,26 @@ class SimulatorGenerator(sim2d.Simulator):
     def init_state_fn(self, state, contacts, dt):
         return super().init_state_fn(state, contacts, dt)
 
+def lambdas_stable(filepath: str, threshold: float = 1e3):
+    with File(filepath, "r") as f:
+        for step in (k for k in f.keys() if k.startswith("step_")):
+            lambdas = f[step]["contacts_data"]["lambdas"][:]
+            if lambdas.size > 0:
+                if np.max(np.abs(lambdas)) > threshold:
+                    return False
+    return True
 
 def create_dataset(start_pass_idx: int, num_passes: int, dataset_path: Path):
-    for i in range(start_pass_idx, start_pass_idx + num_passes):
-        logging_config = sim2d.LoggingConfig(False, True, False, dataset_path / "raw" / f"pass_{i}.h5")
+    i = start_pass_idx
+    while i < start_pass_idx + num_passes:
+        hdf5_path = dataset_path / "raw" / f"pass_{i}.h5"
+        logging_config = sim2d.LoggingConfig(False, True, False, hdf5_path)
         sim = SimulatorGenerator(logging_config)
         sim.run()
+        if lambdas_stable(hdf5_path):
+            i += 1
+        else:
+            os.remove(hdf5_path)
 
 
 if __name__ == "__main__":

@@ -130,6 +130,10 @@ class DatasetSim2D(InMemoryDataset):
                 [[config["floor"]["height"][()]]], dtype=torch.float32
             )
             data["world", "w2f", "floor"].edge_index = torch.tensor([[0, 0]], dtype=torch.long).T
+        else:
+            data["floor"].x = torch.zeros((0, 1), dtype=torch.float32)
+            data["world", "w2f", "floor"].edge_attr = torch.zeros((0, 1), dtype=torch.float32)
+            data["world", "w2f", "floor"].edge_index = torch.zeros((2, 0), dtype=torch.long)
 
         attrs_object_object = []
         attrs_floor_object = []
@@ -173,6 +177,10 @@ class DatasetSim2D(InMemoryDataset):
             data["object", "contact", "object"].y = torch.tensor(
                 preds_object_object, dtype=torch.float32
             )
+        else:
+            data["object", "contact", "object"].edge_attr = torch.zeros((0, 4), dtype=torch.float32)
+            data["object", "contact", "object"].edge_index = torch.zeros((2, 0), dtype=torch.long)
+            data["object", "contact", "object"].y = torch.zeros((0), dtype=torch.float32)
         if len(indices_floor_object) > 0:
             data["floor", "contact", "object"].edge_attr = torch.tensor(
                 attrs_floor_object, dtype=torch.float32
@@ -183,6 +191,10 @@ class DatasetSim2D(InMemoryDataset):
             data["floor", "contact", "object"].y = torch.tensor(
                 preds_floor_object, dtype=torch.float32
             )
+        else:
+            data["floor", "contact", "object"].edge_attr = torch.zeros((0, 4), dtype=torch.float32)
+            data["floor", "contact", "object"].edge_index = torch.zeros((2, 0), dtype=torch.long)
+            data["floor", "contact", "object"].y = torch.zeros((0), dtype=torch.float32)
 
         return data
 
