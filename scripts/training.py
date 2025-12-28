@@ -105,10 +105,13 @@ def train(
             }
         )
         wandb.save(str(config["dataset_root"]))
-        scheduler.step()
+        if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+            scheduler.step(val_loss)
+        else:
+            scheduler.step()
         if val_loss < min_val_loss:
             min_val_loss = val_loss
-            torch.save(model.state_dict(), config["dataset_root"] / "model.pt")
+            torch.save(model, config["dataset_root"] / config["model_name"])
 
 
 def main(config):
@@ -120,14 +123,10 @@ def main(config):
     )
     train_dataset = DatasetSim2D(root=config["dataset_root"] / "train_dataset")
     val_dataset = DatasetSim2D(root=config["dataset_root"] / "val_dataset")
-    train_loader = DataLoader(
-        train_dataset, batch_size=config["batch_size"], shuffle=True, num_workers=config["workers"]
-    )
-    val_loader = DataLoader(
-        val_dataset, batch_size=config["batch_size"], shuffle=False, num_workers=config["workers"]
-    )
+    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], shuffle=False)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr_init"])
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, config["epochs"])
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.2, threshold=0.001)
     model.to(config["device"])
     wandb.init(project="sim2d-gnn", config=config, mode="online" if config["wandb"] else "disabled")
     wandb.config.update(
@@ -154,12 +153,11 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=100)
 
-    parser.add_argument("--workers", type=int, default=16)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--dataset_root", type=Path, default=Path("data/gnn_datasets/"))
-
-    parser.add_argument("--no_wandb", action="store_false", dest="wandb")
-    parser.set_defaults(wandb=True)
+    parser.add_argument("--model_name", type=str, default="model.pt")
+    parser.add_argument("--wandb", action="store_true", dest="wandb")
+    parser.set_defaults(wandb=False)
 
     args = parser.parse_args()
     config = vars(args)

@@ -18,7 +18,7 @@ def compute_jacobian(self, state: torch.Tensor, state_init: torch.Tensor, contac
         if num_contacts > 0:
             inv_mass = 1.0 / self.shapes[i].mass
             for j in range(num_contacts):
-                dist, normal = contacts[i][j]
+                dist, normal, _ = contacts[i][j]
                 lambda_val = state[i, 3 + j]
                 J[row_start : row_start + 3, col_start + 3 + j] = -normal * inv_mass
                 b_error = -(self.beta / self.dt) * dist
