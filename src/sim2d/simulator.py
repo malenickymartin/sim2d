@@ -44,6 +44,7 @@ class Simulator(ABC):
         self.gnn = None
         if not init_gnn_path is None:
             self.gnn = torch.load(init_gnn_path, self.device, weights_only=False)
+            self.gnn.eval()
             self.gnn_data = self.prepare_gnn_data()
             self.gnn_data = self.gnn_data.to(self.device)
 
