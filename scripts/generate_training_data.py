@@ -7,12 +7,14 @@ from h5py import File
 
 import sim2d
 
+
 class SimulatorGenerator(sim2d.Simulator):
     def __init__(self, logging_config):
         newton_iters = 100
         gravity = torch.tensor([0.0, -9.81, 0.0])
         dt = 1 / np.random.randint(20, 200)
-        sim_time = np.random.randint(20, 100) * dt
+        sim_time = np.random.randint(20, 50) * dt
+        self.device = torch.device("cpu")
         super().__init__(sim_time, newton_iters, gravity, dt, logging_config=logging_config)
 
     def build_model(self):
@@ -23,7 +25,12 @@ class SimulatorGenerator(sim2d.Simulator):
         max_collision = 0.05
         attempts = 0
         while (shapes_placed < num_shapes) and (attempts < max_attempts):
-            translation = torch.tensor([np.random.uniform(-1.0, 1.0), np.random.uniform(self.floor.height - 0.1, self.floor.height + 1.5)])
+            translation = torch.tensor(
+                [
+                    np.random.uniform(-1.0, 1.0),
+                    np.random.uniform(self.floor.height - 0.1, self.floor.height + 1.5),
+                ]
+            )
             rotation = torch.tensor(np.random.uniform(0, 2 * np.pi))
             velocity = torch.tensor(np.random.uniform(-1.0, 1.0, 2))
             angular_velocity = torch.tensor(np.random.uniform(-np.pi / 2, np.pi / 2))
@@ -34,15 +41,13 @@ class SimulatorGenerator(sim2d.Simulator):
             else:
                 radius = np.random.uniform(0.05, 0.5)
                 shape = sim2d.Circle(translation, velocity, mass, restitution, radius)
-            contacts = [sim2d.compute_collision(shape, s)[1] for s in self.shapes]
-            contacts.append(sim2d.compute_collision(shape, self.floor)[1])
+            contacts = [sim2d.compute_collision(shape, s, self.device)[1] for s in self.shapes]
+            contacts.append(sim2d.compute_collision(shape, self.floor, self.device)[1])
             attempts += 1
             if (len(contacts) == 0) or (max(contacts) < max_collision):
                 self.shapes.append(shape)
                 shapes_placed += 1
 
-    def init_state_fn(self, state, contacts, dt):
-        return super().init_state_fn(state, contacts, dt)
 
 def lambdas_stable(filepath: str, threshold: float = 1e3):
     with File(filepath, "r") as f:
@@ -52,6 +57,7 @@ def lambdas_stable(filepath: str, threshold: float = 1e3):
                 if np.max(np.abs(lambdas)) > threshold:
                     return False
     return True
+
 
 def create_dataset(start_pass_idx: int, num_passes: int, dataset_path: Path):
     i = start_pass_idx

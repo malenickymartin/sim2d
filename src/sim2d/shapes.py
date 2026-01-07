@@ -1,14 +1,6 @@
 import torch
 
 
-def shape_to_int(shape):
-    shape_to_int_map = {Floor: -1, Circle: 0, Point: 1}
-    assert (
-        type(shape) in shape_to_int_map.keys()
-    ), f"Unknown shape type. Shape type: {type(shape)}, known types: {shape_to_int_map.keys()}"
-    return shape_to_int_map[type(shape)]
-
-
 class Shape:
     def __init__(
         self,
@@ -16,32 +8,40 @@ class Shape:
         rotation: torch.Tensor,
         velocity: torch.Tensor,
         angular_velocity: torch.Tensor,
-        mass: float,
-        restitution: float,
+        mass: torch.Tensor,
+        restitution: torch.Tensor,
     ):
-        self.translation = translation
-        self.rotation = rotation
-        self.velocity = velocity
-        self.angular_velocity = angular_velocity
-        self.mass = mass
-        self.restitution = restitution
+        self.translation = torch.as_tensor(translation)
+        self.rotation = torch.as_tensor(rotation)
+        self.velocity = torch.as_tensor(velocity)
+        self.angular_velocity = torch.as_tensor(angular_velocity)
+        self.mass = torch.as_tensor(mass)
+        self.restitution = torch.as_tensor(restitution)
+
+    def to(self, device: torch.device):
+        self.translation = self.translation.to(device)
+        self.rotation = self.rotation.to(device)
+        self.velocity = self.velocity.to(device)
+        self.angular_velocity = self.angular_velocity.to(device)
+        self.mass = self.mass.to(device)
+        self.restitution = self.restitution.to(device)
 
 
 class Floor(Shape):
     def __init__(
         self,
-        height: float,
-        restitution: float,
+        height: torch.Tensor,
+        restitution: torch.Tensor,
     ):
         super().__init__(
             torch.tensor([0.0, height]),
             torch.tensor(0.0),
             torch.tensor([0.0, 0.0]),
             torch.tensor(0.0),
-            torch.inf,
+            torch.tensor(torch.inf),
             restitution,
         )
-        self.height = height
+        self.height = torch.as_tensor(height)
 
 
 class Circle(Shape):
@@ -49,9 +49,9 @@ class Circle(Shape):
         self,
         translation: torch.Tensor,
         velocity: torch.Tensor,
-        mass: float,
-        restitution: float,
-        radius: float,
+        mass: torch.Tensor,
+        restitution: torch.Tensor,
+        radius: torch.Tensor,
     ):
         super().__init__(
             translation,
@@ -61,7 +61,7 @@ class Circle(Shape):
             mass,
             restitution,
         )
-        self.radius = radius
+        self.radius = torch.as_tensor(radius)
 
 
 class Point(Shape):
@@ -69,8 +69,8 @@ class Point(Shape):
         self,
         translation: torch.Tensor,
         velocity: torch.Tensor,
-        mass: float,
-        restitution: float,
+        mass: torch.Tensor,
+        restitution: torch.Tensor,
     ):
         super().__init__(
             translation,
@@ -80,3 +80,44 @@ class Point(Shape):
             mass,
             restitution,
         )
+
+
+class Rectangle(Shape):
+    def __init__(
+        self,
+        translation: torch.Tensor,
+        rotation: torch.Tensor,
+        velocity: torch.Tensor,
+        angular_velocity: torch.Tensor,
+        mass: torch.Tensor,
+        restitution: torch.Tensor,
+        sides: torch.Tensor,
+    ):
+        super().__init__(
+            translation,
+            torch.tensor(rotation),
+            velocity,
+            torch.tensor(angular_velocity),
+            mass,
+            restitution,
+        )
+        self.sides = torch.as_tensor(sides)
+
+
+SHAPE_TO_INT = {Floor: -1, Circle: 0, Point: 1, Rectangle: 2}
+INT_TO_SHAPE = {v: k for k, v in SHAPE_TO_INT.items()}
+
+
+def shape_to_int(shape):
+    shape_type = type(shape)
+    assert (
+        shape_type in SHAPE_TO_INT.keys()
+    ), f"Unknown shape type. Shape type: {shape_type}, known types: {SHAPE_TO_INT.keys()}"
+    return SHAPE_TO_INT[shape_type]
+
+
+def int_to_shape(i: int):
+    assert (
+        i in INT_TO_SHAPE.keys()
+    ), f"Unknown shape type. Shape type: {i}, known types: {INT_TO_SHAPE.keys()}"
+    return INT_TO_SHAPE[i]

@@ -4,18 +4,20 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from matplotlib.widgets import Slider, Button
 import matplotlib.patches as patches
+import math
 
 # --- Constants ---
 SHAPE_TYPE_FLOOR = -1
 SHAPE_TYPE_CIRCLE = 0
 SHAPE_TYPE_POINT = 1
+SHAPE_TYPE_RECTANGLE = 2
 
 # Controls how quickly arrows fade (Number of frames)
 FADE_FRAMES = 10
 
 # Controls arrow length (LOWER value = LONGER arrows)
-# 1.0 means a unit vector (length 1) is drawn as 1.0 unit long in the plot.
 ARROW_SCALE = 2.5
+ROTATION_SCALE = 1.0
 
 
 def visualize_simulation(filepath: str):
@@ -40,6 +42,12 @@ def visualize_simulation(filepath: str):
             print("Warning: 'radii' not found in log. Using defaults.")
             radii = np.ones(num_shapes) * 0.5
 
+        # Load Sides (for Rectangles)
+        if "sides" in config:
+            sides = config["sides"][:]
+        else:
+            sides = np.zeros((num_shapes, 2))
+
         # Load Floor config
         floor_active = config["floor"]["active"][()]
         floor_height = config["floor"]["height"][()] if floor_active else 0.0
@@ -50,6 +58,7 @@ def visualize_simulation(filepath: str):
 
         times = []
         translations = []
+        rotations = []
 
         contact_indices_log = []
         contact_Js_log = []
@@ -60,6 +69,7 @@ def visualize_simulation(filepath: str):
 
             s_data = step_grp["shapes_data"]
             translations.append(s_data["translation"][:])
+            rotations.append(s_data["rotation"][:])
 
             c_data = step_grp["contacts_data"]
             count = c_data["count"][()]
@@ -73,6 +83,7 @@ def visualize_simulation(filepath: str):
 
     times = np.array(times)
     translations = np.array(translations)
+    rotations = np.array(rotations)
     print(f"Loaded {num_steps} steps.")
 
     # --- Pre-calculate Bounds ---
@@ -80,11 +91,17 @@ def visualize_simulation(filepath: str):
     all_y = []
 
     for s_idx in range(num_shapes):
-        r = radii[s_idx]
         xs = translations[:, s_idx, 0]
         ys = translations[:, s_idx, 1]
-        all_x.extend([np.min(xs) - r, np.max(xs) + r])
-        all_y.extend([np.min(ys) - r, np.max(ys) + r])
+
+        if shape_types[s_idx] == SHAPE_TYPE_RECTANGLE:
+            w, h = sides[s_idx]
+            extent = math.sqrt(w**2 + h**2) / 2.0
+        else:
+            extent = radii[s_idx]
+
+        all_x.extend([np.min(xs) - extent, np.max(xs) + extent])
+        all_y.extend([np.min(ys) - extent, np.max(ys) + extent])
 
     if floor_active:
         all_y.extend([floor_height, floor_height - 1.0])
@@ -124,17 +141,31 @@ def visualize_simulation(filepath: str):
 
     for i, s_type in enumerate(shape_types):
         pos = translations[0][i]
-        r = radii[i]
+
         if s_type == SHAPE_TYPE_POINT:
             r = 0.05
             patch = patches.Circle((pos[0], pos[1]), r, fc="red", ec="black", zorder=5)
+        elif s_type == SHAPE_TYPE_RECTANGLE:
+            w, h = sides[i]
+            patch = patches.Rectangle(
+                (0, 0), w, h, angle=0.0, fc="orange", ec="darkorange", alpha=0.9, zorder=5
+            )
         else:
+            r = radii[i]
             patch = patches.Circle(
                 (pos[0], pos[1]), r, fc="cornflowerblue", ec="navy", alpha=0.9, zorder=5
             )
 
         ax.add_patch(patch)
         graphic_elements.append(patch)
+
+    # --- Torque/Rotation Visualization Markers ---
+    scat_ccw = ax.scatter(
+        [], [], s=ROTATION_SCALE * 120, marker=r"$\curvearrowleft$", color="lime", zorder=11
+    )
+    scat_cw = ax.scatter(
+        [], [], s=ROTATION_SCALE * 120, marker=r"$\curvearrowright$", color="lime", zorder=11
+    )
 
     time_text = ax.text(0.02, 0.95, "", transform=ax.transAxes)
 
@@ -165,16 +196,33 @@ def visualize_simulation(filepath: str):
 
         # 1. Update Shape Positions
         current_trans = translations[idx]
-        for i, patch in enumerate(graphic_elements):
-            patch.center = (current_trans[i][0], current_trans[i][1])
+        current_rots = rotations[idx]
 
-        # 2. Update Jacobians (Recreate Quiver with Fading)
+        for i, patch in enumerate(graphic_elements):
+            if isinstance(patch, patches.Rectangle):
+                cx, cy = current_trans[i]
+                theta = current_rots[i]
+                w, h = sides[i]
+                dx, dy = -w / 2.0, -h / 2.0
+                cos_t, sin_t = np.cos(theta), np.sin(theta)
+                rot_x = dx * cos_t - dy * sin_t
+                rot_y = dx * sin_t + dy * cos_t
+                patch.set_xy((cx + rot_x, cy + rot_y))
+                patch.angle = np.degrees(theta)
+            else:
+                patch.center = (current_trans[i][0], current_trans[i][1])
+
+        # 2. Update Jacobians (Linear Quiver + Angular Scatter)
         if sim_state.quiver is not None:
             try:
                 sim_state.quiver.remove()
             except ValueError:
                 pass
             sim_state.quiver = None
+
+        # Reset scatter plots
+        scat_ccw.set_offsets(np.empty((0, 2)))
+        scat_cw.set_offsets(np.empty((0, 2)))
 
         if sim_state.show_jacobians:
             curr_indices = contact_indices_log[idx]
@@ -193,6 +241,8 @@ def visualize_simulation(filepath: str):
                     }
 
             arrow_x, arrow_y, arrow_u, arrow_v, arrow_colors = [], [], [], [], []
+            ccw_points, ccw_colors = [], []
+            cw_points, cw_colors = [], []
 
             keys_to_check = list(sim_state.persistent_contacts.keys())
 
@@ -207,30 +257,52 @@ def visualize_simulation(filepath: str):
                     continue
 
                 alpha = data["life"] / FADE_FRAMES
-                color = (0.2, 1.0, 0.2, alpha)  # Lime green
+                # Color for both arrows and markers
+                base_color = (0.2, 1.0, 0.2, alpha)
 
                 idx1, idx2 = key
                 J1 = data["J1"]
                 pos1 = current_trans[idx1]
 
+                # Linear Components
                 arrow_x.append(pos1[0])
                 arrow_y.append(pos1[1])
                 arrow_u.append(J1[0])
                 arrow_v.append(J1[1])
-                arrow_colors.append(color)
+                arrow_colors.append(base_color)
+
+                # Angular Component (J1)
+                # Threshold to avoid drawing noise
+                if abs(J1[2]) > 0.05:
+                    if J1[2] > 0:
+                        ccw_points.append([pos1[0], pos1[1]])
+                        ccw_colors.append(base_color)
+                    else:
+                        cw_points.append([pos1[0], pos1[1]])
+                        cw_colors.append(base_color)
 
                 if idx2 != -1:
                     J2 = data["J2"]
                     pos2 = current_trans[idx2]
+
+                    # Linear
                     arrow_x.append(pos2[0])
                     arrow_y.append(pos2[1])
                     arrow_u.append(J2[0])
                     arrow_v.append(J2[1])
-                    arrow_colors.append(color)
+                    arrow_colors.append(base_color)
 
+                    # Angular Component (J2)
+                    if abs(J2[2]) > 0.05:
+                        if J2[2] > 0:
+                            ccw_points.append([pos2[0], pos2[1]])
+                            ccw_colors.append(base_color)
+                        else:
+                            cw_points.append([pos2[0], pos2[1]])
+                            cw_colors.append(base_color)
+
+            # Update Linear Quiver
             if len(arrow_x) > 0:
-                # scale=1.0 makes vectors length 1.0 in data units
-                # width=0.003 ensures they stay thin and sharp
                 sim_state.quiver = ax.quiver(
                     arrow_x,
                     arrow_y,
@@ -240,15 +312,23 @@ def visualize_simulation(filepath: str):
                     scale=ARROW_SCALE,
                     scale_units="xy",
                     angles="xy",
-                    width=0.002,  # <-- Key change for thinness
+                    width=0.002,
                     headwidth=4,
-                    headlength=5,  # Adjust head proportions
+                    headlength=5,
                     zorder=10,
                 )
 
+            # Update Angular Scatters
+            if ccw_points:
+                scat_ccw.set_offsets(ccw_points)
+                scat_ccw.set_color(ccw_colors)
+            if cw_points:
+                scat_cw.set_offsets(cw_points)
+                scat_cw.set_color(cw_colors)
+
         time_text.set_text(f"Time: {times[idx]:.2f}s (Frame {idx})")
 
-        ret = graphic_elements + [time_text]
+        ret = graphic_elements + [time_text, scat_ccw, scat_cw]
         if sim_state.quiver:
             ret.append(sim_state.quiver)
         return ret
@@ -256,7 +336,12 @@ def visualize_simulation(filepath: str):
     # --- Widgets ---
     ax_slider = plt.axes([0.2, 0.1, 0.65, 0.03], facecolor="lightgoldenrodyellow")
     slider = Slider(
-        ax=ax_slider, label="Frame", valmin=0, valmax=num_steps - 1, valinit=0, valstep=1
+        ax=ax_slider,
+        label="Frame",
+        valmin=0,
+        valmax=num_steps - 1,
+        valinit=0,
+        valstep=1,
     )
 
     ax_play = plt.axes([0.05, 0.1, 0.1, 0.04])

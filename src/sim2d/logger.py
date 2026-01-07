@@ -127,21 +127,26 @@ class EngineLogger:
         with self.hdf5_logger.scope("init_config"):
             self.hdf5_logger.log_data("num_shapes", len(sim.shapes))
             self.hdf5_logger.log_data("shape_types", [shape_to_int(s) for s in sim.shapes])
-            self.hdf5_logger.log_data("masses", [s.mass for s in sim.shapes])
-            self.hdf5_logger.log_data("restitutions", [s.restitution for s in sim.shapes])
+            self.hdf5_logger.log_data("masses", [s.mass.cpu() for s in sim.shapes])
+            self.hdf5_logger.log_data("restitutions", [s.restitution.cpu() for s in sim.shapes])
+
             radii = []
             for s in sim.shapes:
-                radii.append(getattr(s, "radius", 0.0))
+                radii.append(getattr(s, "radius", torch.tensor(0.0)).cpu())
             self.hdf5_logger.log_data("radii", radii)
+            sides = []
+            for s in sim.shapes:
+                sides.append(getattr(s, "sides", torch.tensor([0.0, 0.0])).cpu())
+            self.hdf5_logger.log_data("sides", sides)
 
-            self.hdf5_logger.log_data("gravity", sim.gravity)
+            self.hdf5_logger.log_data("gravity", sim.gravity.cpu())
             self.hdf5_logger.log_data("dt", sim.dt)
             self.hdf5_logger.log_data("newton_iters", sim.newton_iters)
             with self.hdf5_logger.scope("floor"):
                 if not sim.floor is None:
                     self.hdf5_logger.log_data("active", True)
-                    self.hdf5_logger.log_data("restitution", sim.floor.restitution)
-                    self.hdf5_logger.log_data("height", sim.floor.height)
+                    self.hdf5_logger.log_data("restitution", sim.floor.restitution.cpu())
+                    self.hdf5_logger.log_data("height", sim.floor.height.cpu())
                 else:
                     self.hdf5_logger.log_data("active", False)
 
@@ -159,13 +164,15 @@ class EngineLogger:
         with self.hdf5_logger.scope(f"step_{step:04d}"):
             self.hdf5_logger.log_data("time", time_val)
             with self.hdf5_logger.scope("shapes_data"):
-                self.hdf5_logger.log_data("translation", [s.translation for s in shapes])
-                self.hdf5_logger.log_data("rotation", [s.rotation for s in shapes])
-                self.hdf5_logger.log_data("velocity", [s.velocity for s in shapes])
-                self.hdf5_logger.log_data("angular_velocity", [s.angular_velocity for s in shapes])
+                self.hdf5_logger.log_data("translation", [s.translation.cpu() for s in shapes])
+                self.hdf5_logger.log_data("rotation", [s.rotation.cpu() for s in shapes])
+                self.hdf5_logger.log_data("velocity", [s.velocity.cpu() for s in shapes])
+                self.hdf5_logger.log_data(
+                    "angular_velocity", [s.angular_velocity.cpu() for s in shapes]
+                )
             with self.hdf5_logger.scope("contacts_data"):
+                self.hdf5_logger.log_data("lambdas", state[:, 3:].cpu())
                 self.hdf5_logger.log_data("count", contact_log["count"])
-                self.hdf5_logger.log_data("lambdas", state[:, 3:])
                 self.hdf5_logger.log_data("indices", contact_log["indices"])
                 self.hdf5_logger.log_data("distances", contact_log["distances"])
                 self.hdf5_logger.log_data("Js", contact_log["Js"])
@@ -196,7 +203,7 @@ class EngineLogger:
         if not self.timings:
             return
 
-        print("\n=== TIMING PERFORMANCE REPORT ===")
+        print("=== TIMING PERFORMANCE REPORT ===")
         data = []
         for name, values in self.timings.items():
             arr = np.array(values)
@@ -204,6 +211,7 @@ class EngineLogger:
                 {
                     "Operation": name,
                     "Mean (ms)": f"{np.mean(arr):.3f}",
+                    "Mean (ms)": f"{np.median(arr):.3f}",
                     "Std (ms)": f"{np.std(arr):.3f}",
                     "Min (ms)": f"{np.min(arr):.3f}",
                     "Max (ms)": f"{np.max(arr):.3f}",

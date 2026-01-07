@@ -6,38 +6,6 @@ from .shapes import Shape
 from .logger import EngineLogger
 
 
-def compute_jacobian(self, state: torch.Tensor, state_init: torch.Tensor, contacts: list):
-    n_shapes, n_vars = state.shape
-    total_vars = n_shapes * n_vars
-    J = torch.zeros((total_vars, total_vars), device=state.device)
-    for i in range(n_shapes):
-        row_start = i * n_vars
-        col_start = i * n_vars
-        J[row_start : row_start + 3, col_start : col_start + 3] = torch.eye(3)
-        num_contacts = len(contacts[i])
-        if num_contacts > 0:
-            inv_mass = 1.0 / self.shapes[i].mass
-            for j in range(num_contacts):
-                dist, normal, _ = contacts[i][j]
-                lambda_val = state[i, 3 + j]
-                J[row_start : row_start + 3, col_start + 3 + j] = -normal * inv_mass
-                b_error = -(self.beta / self.dt) * dist
-                b_restitution = self.shapes[i].restitution * state_init[i, :3]
-                a = torch.dot(normal, state[i, :3] + b_restitution) + b_error
-                b = lambda_val
-                hypot = torch.sqrt(a**2 + b**2 + self.eps)
-                dFB_da = 1.0 - a / hypot
-                dFB_db = 1.0 - b / hypot
-                row_idx = row_start + 3 + j
-                J[row_idx, col_start : col_start + 3] = dFB_da * normal
-                J[row_idx, col_start + 3 + j] = dFB_db
-        unused_start = 3 + num_contacts
-        if unused_start < n_vars:
-            idx_range = range(row_start + unused_start, row_start + n_vars)
-            J[idx_range, idx_range] = 1.0
-    return J
-
-
 class EulerSolver:
     def __init__(
         self,
@@ -47,6 +15,7 @@ class EulerSolver:
         dt: float,
         init_state_fn: Callable,
         logger: EngineLogger,
+        device: torch.device,
         analytical_jac: bool = True,
         beta: float = 0.05,
         eps: float = 1e-6,
@@ -54,22 +23,22 @@ class EulerSolver:
     ):
         self.shapes = shapes
         self.newton_iters = newton_iters
-        self.gravity = gravity
+        self.gravity = gravity.to(device)
         self.dt = dt
         self.init_state_fn = init_state_fn
         self.logger = logger
+        self.device = device
         self.analytical_jac = analytical_jac
         self.beta = beta
         self.eps = eps
         self.atol = atol
 
+        self.masses = torch.tensor([s.mass for s in self.shapes], device=self.device)
+        self.restitutions = torch.tensor([s.restitution for s in self.shapes], device=self.device)
+
         self.num_shapes = len(shapes)
 
-    def step(
-        self, step_idx: int, state: torch.Tensor, contacts: list[list[torch.Tensor]]
-    ) -> torch.Tensor:
-        # state = num_objects x (velocity_x, velocity_y, angular_velocity, lambdas...)
-        # contacts = num_objects x num_contacts_for_object*(dist, contact_jacobian_x,y,alpha)
+    def step(self, step_idx: int, state: torch.Tensor, contacts: dict) -> torch.Tensor:
         state_init = state.clone()
         with self.logger.timed_block("initial_guess"):
             state: torch.Tensor = self.init_state_fn(state, contacts, self.dt).clone()
@@ -78,10 +47,10 @@ class EulerSolver:
         ), f"State shape is not correct. Expected: {self.state_shape(contacts)}, got {state.shape}."
         with self.logger.timed_block("newton_solve"):
             for i in range(self.newton_iters):
+                res_val: torch.Tensor = self.resudial_fn(state, state_init, contacts)
                 with self.logger.timed_block("linearization"):
-                    res_val: torch.Tensor = self.resudial_fn(state, state_init, contacts)
                     if self.analytical_jac:
-                        J = compute_jacobian(self, state, state_init, contacts)
+                        J = self.compute_jacobian(state, state_init, contacts)
                     else:
                         with torch.enable_grad():
                             state_var = state.detach().requires_grad_(True)
@@ -109,26 +78,78 @@ class EulerSolver:
                     return state.detach()
         return state.detach()
 
-    def resudial_fn(self, state: torch.Tensor, state_init: torch.Tensor, contacts: list):
+    def resudial_fn(self, state: torch.Tensor, state_init: torch.Tensor, contacts):
         res = torch.zeros_like(state)
-        for i in range(self.num_shapes):
-            num_contacts = len(contacts[i])
-            res[i, :3] += state[i, :3] - state_init[i, :3] - self.gravity * self.dt
-            if num_contacts > 0:
-                for j in range(num_contacts):
-                    lambda_distributed = contacts[i][j][1] * state[i, 3 + j]
-                    res[i, :3] += -lambda_distributed / self.shapes[i].mass
-                    b_error = -(self.beta / self.dt) * contacts[i][j][0]
-                    b_restitution = self.shapes[i].restitution * state_init[i, :3]
-                    b_scaled = torch.dot(contacts[i][j][1], state[i, :3] + b_restitution)
-                    res[i, 3 + j] = self.fischer_burmeister(b_scaled + b_error, state[i, 3 + j])
-            if num_contacts < (state.shape[1]):
-                res[i, 3 + num_contacts :] = state[i, 3 + num_contacts :]
-        res = torch.flatten(res)
-        return res
+        res[:, 3:] = state[:, 3:]
+        res[:, :3] = state[:, :3] - state_init[:, :3] - self.gravity * self.dt
+        if contacts["body_idx"].numel() > 0:
+            body_idxs = contacts["body_idx"]
+            local_idxs = contacts["local_idx"]
+            jacobians = contacts["jac"]
+            dists = contacts["dist"]
+
+            lambdas = state[body_idxs, 3 + local_idxs]
+            force_impulse = -lambdas.unsqueeze(1) * jacobians
+            inv_masses = 1.0 / self.masses[body_idxs].unsqueeze(1)
+            vel_delta = force_impulse * inv_masses
+            res_vel = res[:, :3].clone()
+            res_vel.index_add_(0, body_idxs, vel_delta)
+            res[:, :3] = res_vel
+
+            b_error = -(self.beta / self.dt) * dists
+            b_restitution = self.restitutions[body_idxs].unsqueeze(1) * state_init[body_idxs, :3]
+            v_term = state[body_idxs, :3] + b_restitution
+            b_scaled = (jacobians * v_term).sum(dim=1)
+            a = b_scaled + b_error
+            b = lambdas
+            fb_vals = self.fischer_burmeister(a, b)
+            res[body_idxs, 3 + local_idxs] = fb_vals
+        return torch.flatten(res)
+
+    def compute_jacobian(self, state: torch.Tensor, state_init: torch.Tensor, contacts: dict):
+        n_shapes, n_vars = state.shape
+        total_vars = n_shapes * n_vars
+        J = torch.zeros((total_vars, total_vars), device=self.device)
+        shape_indices = torch.arange(n_shapes, device=self.device)
+        row_starts = shape_indices * n_vars
+        col_starts = shape_indices * n_vars
+        for k in range(3):
+            J[row_starts + k, col_starts + k] = 1.0
+        for k in range(3, n_vars):
+            diag_idx = row_starts + k
+            J[diag_idx, diag_idx] = 1.0
+        if contacts["body_idx"].numel() > 0:
+            body_idxs = contacts["body_idx"]
+            local_idxs = contacts["local_idx"]
+            jacobians = contacts["jac"]
+            dists = contacts["dist"]
+            inv_masses = 1.0 / self.masses[body_idxs]
+            lambdas = state[body_idxs, 3 + local_idxs]
+            base_rows = body_idxs * n_vars
+            base_cols = body_idxs * n_vars
+            col_lambda = base_cols + 3 + local_idxs
+            for k in range(3):
+                J[base_rows + k, col_lambda] = -jacobians[:, k] * inv_masses
+            b_error = -(self.beta / self.dt) * dists
+            b_restitution = self.restitutions[body_idxs].unsqueeze(1) * state_init[body_idxs, :3]
+            v_curr = state[body_idxs, :3]
+            a = (jacobians * (v_curr + b_restitution)).sum(dim=1) + b_error
+            b = lambdas
+            hypot = torch.sqrt(a**2 + b**2 + self.eps)
+            dFB_da = 1.0 - a / hypot
+            dFB_db = 1.0 - b / hypot
+            row_lambda = base_rows + 3 + local_idxs
+            for k in range(3):
+                J[row_lambda, base_cols + k] = dFB_da * jacobians[:, k]
+            J[row_lambda, col_lambda] = dFB_db
+        return J
 
     def fischer_burmeister(self, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
         return a + b - torch.sqrt(a**2 + b**2 + self.eps)
 
     def state_shape(self, contacts) -> tuple[int]:
-        return (self.num_shapes, 3 + max([len(a) for a in contacts]))
+        if contacts["body_idx"].numel() == 0:
+            max_contacts = 0
+        else:
+            max_contacts = int(contacts["counts"].max().item())
+        return (self.num_shapes, 3 + max_contacts)
