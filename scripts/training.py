@@ -2,34 +2,18 @@ import argparse
 from pathlib import Path
 
 import torch
-import torch.nn.functional as F
 from torch_geometric.data import HeteroData
 from torch_geometric.loader import DataLoader
 
 from tqdm import tqdm
 import wandb
 
-from sim2d import GNNSim2D, DatasetSim2D
-
-
-def loss_fn(data, object_states, lambdas_dict) -> torch.Tensor:
-    gt_values = data["object"].y.flatten()
-    pred_values = object_states.flatten()
-    if ("floor", "contact", "object") in data.edge_types:
-        gt_values = torch.cat([gt_values, data[("floor", "contact", "object")].y])
-        pred_values = torch.cat(
-            [pred_values, lambdas_dict[("floor", "contact", "object")].flatten()]
-        )
-    if ("object", "contact", "object") in data.edge_types:
-        gt_values = torch.cat([gt_values, data[("object", "contact", "object")].y])
-        pred_values = torch.cat(
-            [pred_values, lambdas_dict[("object", "contact", "object")].flatten()]
-        )
-    return F.mse_loss(pred_values, gt_values)
+from sim2d.gnn import GNNSim2D, DatasetSim2D, GNNLoss
 
 
 def train_epoch(
     model: GNNSim2D,
+    loss_fn: GNNLoss,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     device: str,
@@ -53,6 +37,7 @@ def train_epoch(
 
 def validate_epoch(
     model: GNNSim2D,
+    loss_fn: GNNLoss,
     loader: DataLoader,
     device: str,
     epoch: int,
@@ -73,6 +58,7 @@ def validate_epoch(
 
 def train(
     model: GNNSim2D,
+    loss_fn: GNNLoss,
     train_loader: DataLoader,
     val_loader: DataLoader,
     optimizer: torch.optim.Optimizer,
@@ -83,6 +69,7 @@ def train(
     for epoch in range(config["epochs"]):
         train_loss = train_epoch(
             model,
+            loss_fn,
             train_loader,
             optimizer,
             config["device"],
@@ -91,6 +78,7 @@ def train(
         )
         val_loss = validate_epoch(
             model,
+            loss_fn,
             val_loader,
             config["device"],
             epoch,
@@ -111,7 +99,7 @@ def train(
             scheduler.step()
         if val_loss < min_val_loss:
             min_val_loss = val_loss
-            torch.save(model, config["dataset_root"] / config["model_name"])
+            torch.save(model, config["dataset_root"] / "models" / config["model_name"])
 
 
 def main(config):
@@ -121,6 +109,7 @@ def main(config):
         config["hidden_layers"],
         config["normalize"],
     )
+    loss_fn = GNNLoss(config["loss_type"])
     train_dataset = DatasetSim2D(root=config["dataset_root"] / "train_dataset")
     val_dataset = DatasetSim2D(root=config["dataset_root"] / "val_dataset")
     train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
@@ -128,7 +117,12 @@ def main(config):
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr_init"])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.2, threshold=0.001)
     model.to(config["device"])
-    wandb.init(project="sim2d-gnn", config=config, mode="online" if config["wandb"] else "disabled")
+    wandb.init(
+        project="sim2d-gnn",
+        config=config,
+        name=config["model_name"].split(".")[0],
+        mode="online" if config["wandb"] else "disabled",
+    )
     wandb.config.update(
         {
             "optimizer_type": optimizer.__class__.__name__,
@@ -136,7 +130,7 @@ def main(config):
         }
     )
     try:
-        train(model, train_loader, val_loader, optimizer, scheduler, config)
+        train(model, loss_fn, train_loader, val_loader, optimizer, scheduler, config)
     finally:
         wandb.finish()
 
@@ -149,6 +143,7 @@ if __name__ == "__main__":
     parser.add_argument("--hidden_dims", type=int, default=128)
     parser.add_argument("--normalize", action="store_true", default=False)
 
+    parser.add_argument("--loss_type", type=str, default="residue_loss")
     parser.add_argument("--lr_init", type=float, default=1e-3)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=100)
