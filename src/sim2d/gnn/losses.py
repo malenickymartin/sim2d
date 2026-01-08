@@ -5,9 +5,9 @@ import torch.nn.functional as F
 class GNNLoss(torch.nn.Module):
     def __init__(self, loss_name, eps=1e-6, beta=0.05):
         super().__init__()
-        if loss_name == "l1":
+        if loss_name == "l1_loss":
             self.loss = self.l1_loss
-        elif loss_name == "weighted_l1":
+        elif loss_name == "weighted_l1_loss":
             self.loss = self.weighted_l1_loss
         elif loss_name == "residue_loss":
             self.eps = eps
