@@ -193,7 +193,6 @@ class EngineLogger:
             with self.hdf5_logger.scope("engine_data"):
                 with self.hdf5_logger.scope(f"newton_step_{newton_step:04d}"):
                     self.hdf5_logger.log_data("J", J)
-                    self.hdf5_logger.log_data("J_cond", torch.linalg.cond(J))
                     self.hdf5_logger.log_data("res", res.reshape(shape))
                     self.hdf5_logger.log_data(
                         "delta", delta.reshape(shape) if len(delta) > 0 else delta

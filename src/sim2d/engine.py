@@ -48,6 +48,11 @@ class EulerSolver:
         with self.logger.timed_block("newton_solve"):
             for i in range(self.newton_iters):
                 res_val: torch.Tensor = self.resudial_fn(state, state_init, contacts)
+                if torch.norm(res_val) < self.atol:
+                    self.logger.log_engine_data(
+                        step_idx, i, state.shape, res_val.detach(), torch.Tensor(), torch.Tensor()
+                    )
+                    return state.detach()
                 with self.logger.timed_block("linearization"):
                     if self.analytical_jac:
                         J = self.compute_jacobian(state, state_init, contacts)
@@ -59,11 +64,6 @@ class EulerSolver:
                             )
                             if J.dim() > 2:
                                 J = J.view(J.shape[0], -1)
-                if torch.norm(res_val) < self.atol:
-                    self.logger.log_engine_data(
-                        step_idx, i, state.shape, res_val.detach(), torch.Tensor(), J
-                    )
-                    return state.detach()
                 with self.logger.timed_block("linear_solve"):
                     try:
                         delta = torch.linalg.solve(J, -res_val.detach())
