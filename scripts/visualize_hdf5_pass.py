@@ -1,10 +1,12 @@
+import argparse
+import math
+
 import h5py
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from matplotlib.widgets import Slider, Button
 import matplotlib.patches as patches
-import math
 
 # --- Constants ---
 SHAPE_TYPE_FLOOR = -1
@@ -362,9 +364,7 @@ def visualize_simulation(filepath: str):
 
 
 if __name__ == "__main__":
-    import sys
-
-    if len(sys.argv) > 1:
-        visualize_simulation(sys.argv[1])
-    else:
-        print("Usage: python visualization.py <path_to_log.h5>")
+    parser = argparse.ArgumentParser(description="Visualize HDF5 Pass")
+    parser.add_argument("--hdf5_file_path", type=str)
+    args = parser.parse_args()
+    visualize_simulation(args["hdf5_file_path"])

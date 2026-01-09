@@ -1,12 +1,11 @@
 import argparse
-import sys
-import torch
 from torch_geometric.data import HeteroData
 import networkx as nx
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
 from sim2d import DatasetSim2D
+
 
 def visualize_hetero_graph(file_path, idx):
     # 1. Load the data
@@ -178,6 +177,8 @@ def visualize_hetero_graph(file_path, idx):
 
 
 if __name__ == "__main__":
-    path = sys.argv[1]
-    idx = int(sys.argv[2])
-    visualize_hetero_graph(path, idx)
+    parser = argparse.ArgumentParser(description="PyG Graph visualization")
+    parser.add_argument("--pt_path", type="str")
+    parser.add_argument("--idx", type=int)
+    args = parser.parse_args()
+    visualize_hetero_graph(args["pt_path"], args["idx"])

@@ -85,7 +85,7 @@ class HDF5Logger:
 class EngineLogger:
     def __init__(self, config: LoggingConfig):
         self.config = config
-        self.hdf5_logger = HDF5Logger(config.log_file) if config.enable_hdf5 else None
+        self.hdf5_logger = HDF5Logger(config.log_file) if config.log_file else None
 
         self.timings: Dict[str, list] = {}
 
@@ -186,7 +186,7 @@ class EngineLogger:
         delta: torch.Tensor,
         J: torch.Tensor,
     ):
-        if not self.hdf5_logger or not self.config.enable_detailed_hdf5:
+        if not self.config.enable_detailed_hdf5:
             return
 
         with self.hdf5_logger.scope(f"step_{step:04d}"):

@@ -1,6 +1,7 @@
-from pathlib import Path
-import sys
+import argparse
 import os
+
+from pathlib import Path
 import torch
 import numpy as np
 from h5py import File
@@ -12,7 +13,7 @@ class SimulatorGenerator(sim2d.Simulator):
     def __init__(self, logging_config):
         newton_iters = 100
         gravity = torch.tensor([0.0, -9.81, 0.0])
-        dt = 1 / np.random.randint(20, 200)
+        dt = 1 / 100
         sim_time = np.random.randint(20, 50) * dt
         self.device = torch.device("cpu")
         super().__init__(sim_time, newton_iters, gravity, dt, logging_config=logging_config)
@@ -73,7 +74,9 @@ def create_dataset(start_pass_idx: int, num_passes: int, dataset_path: Path):
 
 
 if __name__ == "__main__":
-    start_pass_idx = int(sys.argv[1])
-    num_passes = int(sys.argv[2])
-    dataset_path = Path(sys.argv[3])
-    create_dataset(start_pass_idx, num_passes, dataset_path)
+    parser = argparse.ArgumentParser(description="Generate Training Data")
+    parser.add_argument("--start_idx", type=int, default=0)
+    parser.add_argument("--num_passes", type=int)
+    parser.add_argument("--dataset_path", type=Path)
+    args = parser.parse_args()
+    create_dataset(args["start_idx"], args["num_passes"], args["dataset_path"])
