@@ -79,4 +79,4 @@ if __name__ == "__main__":
     parser.add_argument("--num_passes", type=int)
     parser.add_argument("--dataset_path", type=Path)
     args = parser.parse_args()
-    create_dataset(args["start_idx"], args["num_passes"], args["dataset_path"])
+    create_dataset(args.start_idx, args.num_passes, args.dataset_path)

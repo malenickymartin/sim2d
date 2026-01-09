@@ -367,4 +367,4 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Visualize HDF5 Pass")
     parser.add_argument("--hdf5_file_path", type=str)
     args = parser.parse_args()
-    visualize_simulation(args["hdf5_file_path"])
+    visualize_simulation(args.hdf5_file_path)

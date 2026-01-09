@@ -1,6 +1,5 @@
-import sys
+import argparse
 from copy import deepcopy
-import time
 
 import torch
 from pathlib import Path
@@ -81,7 +80,6 @@ class SimulatorBenchmark(sim2d.Simulator):
 
 
 def benchmark(dataset_root: str, model_name: str):
-    dataset_root: Path = Path(dataset_root)
     test_dataset = dataset_root / "test_dataset" / "raw"
     model_path = dataset_root / "models" / model_name
 
@@ -140,7 +138,8 @@ def benchmark(dataset_root: str, model_name: str):
 
 
 if __name__ == "__main__":
-    dataset_root = "data/gnn_datasets"  # sys.argv[1]
-    model_name = "model_inv_mass_lambda_weight.pt"  # sys.argv[2]
-
-    benchmark(dataset_root, model_name)
+    parser = argparse.ArgumentParser(description="Benchmark")
+    parser.add_argument("--dataset_root", type=Path)
+    parser.add_argument("--model_name", type=str)
+    args = parser.parse_args()
+    benchmark(args.dataset_root, args.model_name)

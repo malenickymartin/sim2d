@@ -220,4 +220,4 @@ if __name__ == "__main__":
     parser.add_argument("--save_runs", action="store_true", default=False)
     parser.add_argument("--plot_only", action="store_true", default=False)
     args = parser.parse_args()
-    main(args["dataset_root"], args["model_name"], args["save_runs"], args["plot_only"])
+    main(args.dataset_root, args.model_name, args.save_runs, args.plot_only)
