@@ -3,6 +3,7 @@ from torch_geometric.data import HeteroData
 import networkx as nx
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from matplotlib.lines import Line2D  # Added import for custom legend lines
 
 from sim2d import DatasetSim2D
 
@@ -167,7 +168,17 @@ def visualize_hetero_graph(file_path, idx):
 
     for group_name, batch in edge_batches.items():
         label_text = group_name.replace("_", " ").title()
-        legend_patches.append(mpatches.Patch(color=batch["color"], label=f"Edge: {label_text}"))
+        # Use Line2D to preserve the linestyle (dashed vs solid) in the legend
+        legend_patches.append(
+            Line2D(
+                [0],
+                [0],
+                color=batch["color"],
+                label=f"Edge: {label_text}",
+                linestyle=batch["style"],
+                linewidth=batch["width"],
+            )
+        )
 
     plt.legend(handles=legend_patches, loc="upper right")
     plt.title(f"Graph Visualization: {file_path}")
@@ -178,7 +189,7 @@ def visualize_hetero_graph(file_path, idx):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PyG Graph visualization")
-    parser.add_argument("--pt_path", type="str")
+    parser.add_argument("--dataset_root", type=str)
     parser.add_argument("--idx", type=int)
     args = parser.parse_args()
     visualize_hetero_graph(args.pt_path, args.idx)

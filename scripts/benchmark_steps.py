@@ -112,7 +112,7 @@ def plot_spaghetti(ax, data, label, color):
     for run in data:
         ax.plot(run, color=color, alpha=0.1, linewidth=1)
     ax.plot([], [], color=color, label=label)
-    ax.set_title("Raw Data (Spaghetti)")
+    ax.set_title("Raw Data")
     ax.set_yscale("log")
     ax.set_xlabel("Newton Step")
     ax.set_ylabel("Residue Norm")
@@ -130,6 +130,7 @@ def plot_extended_tail(ax, data, label, color):
     ax.set_title("Aggregated (Median + IQR)")
     ax.set_yscale("log")
     ax.set_xlabel("Newton Step")
+    ax.set_ylabel("Residue Norm")
     ax.grid(True, which="both", linestyle="--", alpha=0.5)
 
 

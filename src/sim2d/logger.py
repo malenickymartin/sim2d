@@ -210,7 +210,7 @@ class EngineLogger:
                 {
                     "Operation": name,
                     "Mean (ms)": f"{np.mean(arr):.3f}",
-                    "Mean (ms)": f"{np.median(arr):.3f}",
+                    "Median (ms)": f"{np.median(arr):.3f}",
                     "Std (ms)": f"{np.std(arr):.3f}",
                     "Min (ms)": f"{np.min(arr):.3f}",
                     "Max (ms)": f"{np.max(arr):.3f}",
