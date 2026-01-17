@@ -48,8 +48,6 @@ class Simulator(ABC):
         if not init_gnn_path is None:
             self.gnn = torch.load(init_gnn_path, self.device, weights_only=False)
             self.gnn.eval()
-            self.gnn_data = self.prepare_gnn_data()
-            self.gnn_data = self.gnn_data.to(self.device)
 
         self.solver = EulerSolver(
             self.shapes,
@@ -140,59 +138,30 @@ class Simulator(ABC):
         }
         return contacts, contact_log
 
-    def prepare_gnn_data(self):
-        gnn_data = HeteroData()
-        gnn_data["world"].x = torch.tensor(
-            [[self.dt, self.gravity[0], self.gravity[1], self.gravity[2]]], dtype=torch.float32
-        )
-
-        nodes_object = []
-        attrs_world_object = []
-        indices_world_object = []
-        for i in range(self.num_shapes):
-            nodes_object.append(
-                [self.shapes[i].restitution, self.shapes[i].mass, 0.0, 0.0, 0.0, 0.0]
-            )
-            attrs_world_object.append([0.0, 0.0, 0.0, 0.0])
-            indices_world_object.append([0, i])
-        gnn_data["object"].x = torch.tensor(nodes_object, dtype=torch.float32)
-        gnn_data["world", "w2o", "object"].edge_attr = torch.tensor(
-            attrs_world_object, dtype=torch.float32
-        )
-        gnn_data["world", "w2o", "object"].edge_index = torch.tensor(
-            indices_world_object, dtype=torch.long
-        ).T
-
-        if self.floor is not None:
-            gnn_data["floor"].x = torch.tensor([[self.floor.restitution]], dtype=torch.float32)
-            gnn_data["world", "w2f", "floor"].edge_attr = torch.tensor(
-                [[self.floor.height]], dtype=torch.float32
-            )
-            gnn_data["world", "w2f", "floor"].edge_index = torch.tensor(
-                [[0, 0]], dtype=torch.long
-            ).T
-        else:
-            gnn_data["floor"].x = torch.zeros((0, 1), dtype=torch.float32)
-            gnn_data["world", "w2f", "floor"].edge_attr = torch.zeros((0, 1), dtype=torch.float32)
-            gnn_data["world", "w2f", "floor"].edge_index = torch.zeros((2, 0), dtype=torch.long)
-
-        return gnn_data
-
     def update_gnn_data(self, state: torch.Tensor, contacts: torch.Tensor):
+        gnn_data = HeteroData()
+        gnn_data["object"].x = torch.zeros(
+            (self.num_shapes, 6), dtype=torch.float32, device=self.device
+        )
         for i in range(self.num_shapes):
-            self.gnn_data["object"].x[i][2:] = torch.tensor(
-                [state[i][0], state[i][1], torch.norm(state[i][:2]), state[i][2]],
-                device=self.device,
-            )
-            self.gnn_data["world", "w2o", "object"].edge_attr[i][:] = torch.tensor(
+            gnn_data["object"].x[i][:] = torch.tensor(
                 [
-                    self.shapes[i].translation[0],
-                    self.shapes[i].translation[1],
-                    torch.norm(self.shapes[i].translation),
-                    self.shapes[i].rotation,
+                    self.shapes[i].restitution,
+                    self.shapes[i].mass,
+                    state[i][0],
+                    state[i][1],
+                    torch.norm(state[i][:2]),
+                    state[i][2],
                 ],
                 device=self.device,
             )
+
+        if self.floor is not None:
+            gnn_data["floor"].x = torch.tensor(
+                [[self.floor.restitution]], dtype=torch.float32, device=self.device
+            )
+        else:
+            gnn_data["floor"].x = torch.zeros((0, 1), dtype=torch.float32, device=self.device)
 
         all_edge_attrs = torch.cat([contacts["jac"], contacts["dist"].unsqueeze(1)], dim=1)
         mask_floor = contacts["neighbor_idx"] == -1
@@ -202,15 +171,15 @@ class Simulator(ABC):
             target_nodes = contacts["body_idx"][mask_floor]
             source_nodes = torch.zeros_like(target_nodes)
 
-            self.gnn_data["floor", "contact", "object"].edge_index = torch.stack(
+            gnn_data["floor", "contact", "object"].edge_index = torch.stack(
                 [source_nodes, target_nodes], dim=0
             )
-            self.gnn_data["floor", "contact", "object"].edge_attr = all_edge_attrs[mask_floor]
+            gnn_data["floor", "contact", "object"].edge_attr = all_edge_attrs[mask_floor]
         else:
-            self.gnn_data["floor", "contact", "object"].edge_attr = torch.zeros(
+            gnn_data["floor", "contact", "object"].edge_attr = torch.zeros(
                 (0, 4), dtype=torch.float32, device=self.device
             )
-            self.gnn_data["floor", "contact", "object"].edge_index = torch.zeros(
+            gnn_data["floor", "contact", "object"].edge_index = torch.zeros(
                 (2, 0), dtype=torch.long, device=self.device
             )
 
@@ -218,17 +187,19 @@ class Simulator(ABC):
             target_nodes = contacts["body_idx"][mask_obj]
             source_nodes = contacts["neighbor_idx"][mask_obj]
 
-            self.gnn_data["object", "contact", "object"].edge_index = torch.stack(
+            gnn_data["object", "contact", "object"].edge_index = torch.stack(
                 [source_nodes, target_nodes], dim=0
             )
-            self.gnn_data["object", "contact", "object"].edge_attr = all_edge_attrs[mask_obj]
+            gnn_data["object", "contact", "object"].edge_attr = all_edge_attrs[mask_obj]
         else:
-            self.gnn_data["object", "contact", "object"].edge_attr = torch.zeros(
+            gnn_data["object", "contact", "object"].edge_attr = torch.zeros(
                 (0, 4), dtype=torch.float32, device=self.device
             )
-            self.gnn_data["object", "contact", "object"].edge_index = torch.zeros(
+            gnn_data["object", "contact", "object"].edge_index = torch.zeros(
                 (2, 0), dtype=torch.long, device=self.device
             )
+
+        return gnn_data
 
     def state_from_gnn(self, gnn_output: tuple, contacts: list) -> torch.Tensor:
         object_states, lambdas_dict = gnn_output
@@ -261,9 +232,9 @@ class Simulator(ABC):
             state_guess[:, :3] += state[:, :3]
             state_guess[:, :3] += dt * self.gravity
         else:
-            self.update_gnn_data(state, contacts)
+            gnn_data = self.update_gnn_data(state, contacts)
             gnn_output = self.gnn(
-                self.gnn_data.x_dict, self.gnn_data.edge_index_dict, self.gnn_data.edge_attr_dict
+                gnn_data.x_dict, gnn_data.edge_index_dict, gnn_data.edge_attr_dict
             )
             state_guess = self.state_from_gnn(gnn_output, contacts)
 

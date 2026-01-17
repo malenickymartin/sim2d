@@ -103,15 +103,16 @@ def train(
 
 
 def main(config):
+    loss_fn = GNNLoss(config["loss_type"])
+    train_dataset = DatasetSim2D(root=config["dataset_root"] / "train_dataset")
+    val_dataset = DatasetSim2D(root=config["dataset_root"] / "val_dataset")
     model = GNNSim2D(
         config["message_passes"],
         config["hidden_dims"],
         config["hidden_layers"],
         config["normalize"],
+        stats=train_dataset.stats if config["normalize_input"] else None,
     )
-    loss_fn = GNNLoss(config["loss_type"])
-    train_dataset = DatasetSim2D(root=config["dataset_root"] / "train_dataset")
-    val_dataset = DatasetSim2D(root=config["dataset_root"] / "val_dataset")
     train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], shuffle=False)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr_init"])
@@ -142,6 +143,7 @@ if __name__ == "__main__":
     parser.add_argument("--hidden_layers", type=int, default=2)
     parser.add_argument("--hidden_dims", type=int, default=128)
     parser.add_argument("--normalize", action="store_true", default=False)
+    parser.add_argument("--normalize_input", action="store_true", default=False)
 
     parser.add_argument("--loss_type", type=str, default="residue_loss")
     parser.add_argument("--lr_init", type=float, default=1e-3)

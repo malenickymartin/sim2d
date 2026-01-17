@@ -3,8 +3,17 @@ import torch.nn.functional as F
 
 
 class GNNLoss(torch.nn.Module):
-    def __init__(self, loss_name, eps=1e-6, beta=0.05):
+    def __init__(
+        self,
+        loss_name,
+        gravity=torch.tensor([0.0, -9.81, 0.0]),
+        dt=torch.tensor(0.01),
+        eps=1e-6,
+        beta=0.05,
+    ):
         super().__init__()
+        self.gravity = gravity
+        self.dt = dt
         if loss_name == "l1_loss":
             self.loss = self.l1_loss
         elif loss_name == "weighted_l1_loss":
@@ -63,16 +72,15 @@ class GNNLoss(torch.nn.Module):
         return F.l1_loss(pred_values, gt_values, weight=weight)
 
     def residue_loss(self, data, object_states, lambdas_dict) -> torch.Tensor:
-        batch_idx = (
-            data["object"].batch
-            if hasattr(data["object"], "batch")
-            else torch.zeros(
-                data["object"].x.size(0), dtype=torch.long, device=data["object"].x.device
+        dt = (
+            torch.ones(
+                (data["object"].x.shape[0], 1),
+                dtype=data["object"].x.dtype,
+                device=data["object"].x.device,
             )
+            * self.dt
         )
-        world_params = data["world"].x[batch_idx]
-        dt = world_params[:, 0].unsqueeze(1)
-        gravity = world_params[:, 1:]
+        gravity = self.gravity.repeat(data["object"].x.shape[0], 1).to(data["object"].x.device)
 
         restitutions = data["object"].x[:, 0].unsqueeze(1)
         masses = data["object"].x[:, 1].unsqueeze(1)

@@ -1,8 +1,8 @@
-from typing import Dict, Tuple, Union
+from typing import Dict, Tuple, Union, Any
 
 import torch
 import torch.nn as nn
-from torch_geometric.nn import LayerNorm, MessagePassing
+from torch_geometric.nn import MessagePassing
 
 from .dataset import (
     NODE_FEATURE_DIMS,
@@ -29,7 +29,7 @@ class MLP(nn.Module):
             layers.append(nn.ReLU())
         layers.append(nn.Linear(hidden_dims, output_dims))
         if output_norm:
-            layers.append(LayerNorm(output_dims))
+            layers.append(nn.LayerNorm(output_dims))
         self.mlp = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor):
@@ -37,7 +37,7 @@ class MLP(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, hidden_dims: int, hidden_layers: int, normalize: bool):
+    def __init__(self, hidden_dims: int, hidden_layers: int, normalize: bool, stats: Dict[str, Any] = None):
         super().__init__()
         self.mlp_nodes = nn.ModuleDict(
             {
@@ -53,14 +53,34 @@ class Encoder(nn.Module):
                 for edge_type, edge_dim in EDGE_FEATURE_DIMS.items()
             }
         )
+        
+        if stats is not None:
+            for node_type, s in stats["nodes"].items():
+                self.register_buffer(f"mean_node_{node_type}", s["mean"])
+                self.register_buffer(f"std_node_{node_type}", s["std"])
+            
+            for edge_key, s in stats["edges"].items():
+                self.register_buffer(f"mean_edge_{edge_key}", s["mean"])
+                self.register_buffer(f"std_edge_{edge_key}", s["std"])
 
     def forward(self, x_dict: Dict[str, torch.Tensor], edge_attr_dict: Dict[Tuple, torch.Tensor]):
         x_dict_encoded = {}
         for node_type, x in x_dict.items():
+            if hasattr(self, f"mean_node_{node_type}"):
+                mean = getattr(self, f"mean_node_{node_type}")
+                std = getattr(self, f"std_node_{node_type}")
+                x = (x - mean) / std
             x_dict_encoded[node_type] = self.mlp_nodes[node_type](x)
+            
         edge_attr_dict_encoded = {}
         for edge_type, edge_attr in edge_attr_dict.items():
-            edge_attr_dict_encoded[edge_type] = self.mlp_edges["_".join(edge_type)](edge_attr)
+            edge_key = "_".join(edge_type)
+            if hasattr(self, f"mean_edge_{edge_key}"):
+                mean = getattr(self, f"mean_edge_{edge_key}")
+                std = getattr(self, f"std_edge_{edge_key}")
+                edge_attr = (edge_attr - mean) / std
+            edge_attr_dict_encoded[edge_type] = self.mlp_edges[edge_key](edge_attr)
+            
         return x_dict_encoded, edge_attr_dict_encoded
 
 
@@ -172,9 +192,9 @@ class Processor(nn.Module):
 
 
 class GNNSim2D(nn.Module):
-    def __init__(self, message_passes: int, hidden_dims: int, hidden_layers: int, normalize: bool):
+    def __init__(self, message_passes: int, hidden_dims: int, hidden_layers: int, normalize: bool, stats: Dict[str, Any] = None):
         super().__init__()
-        self.encoder = Encoder(hidden_dims, hidden_layers, normalize)
+        self.encoder = Encoder(hidden_dims, hidden_layers, normalize, stats=stats)
         self.processor = Processor(message_passes, hidden_dims, hidden_layers, normalize)
         self.decoder = Decoder(hidden_dims, hidden_layers)
 

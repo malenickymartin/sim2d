@@ -8,12 +8,10 @@ from tqdm import tqdm
 import h5py
 
 import torch
-from torch_geometric.data import InMemoryDataset, HeteroData
+from torch_geometric.data import InMemoryDataset, HeteroData, DataLoader
 
-NODE_FEATURE_DIMS = {"world": 4, "object": 6, "floor": 1}
+NODE_FEATURE_DIMS = {"object": 6, "floor": 1}
 EDGE_FEATURE_DIMS = {
-    ("world", "w2f", "floor"): 1,
-    ("world", "w2o", "object"): 4,
     ("object", "contact", "object"): 4,
     ("floor", "contact", "object"): 4,
 }
@@ -37,10 +35,14 @@ class DatasetSim2D(InMemoryDataset):
     def __init__(self, root: Union[str, Path]):
         super().__init__(root)
         self.load(self.processed_paths[0], HeteroData)
+        if osp.exists(self.processed_paths[1]):
+            self.stats = torch.load(self.processed_paths[1])
+        else:
+            self.stats = None
 
     @property
     def processed_file_names(self):
-        return ["data.pt"]
+        return ["data_new_wo_constants.pt", "statistics_wo_constants.pt"]
 
     def process(self) -> None:
         passes_paths = []
@@ -62,7 +64,38 @@ class DatasetSim2D(InMemoryDataset):
                     step_next = f[f"step_{step_idx+1:04d}"]
                     graph = self.construct_graph(config, step, step_next)
                     graphs.append(graph)
+        stats = self.calculate_statistics(graphs)
+
         self.save(graphs, self.processed_paths[0])
+        torch.save(stats, self.processed_paths[1])
+
+    def calculate_statistics(self, graphs):
+        stats = {"nodes": {}, "edges": {}}
+        for node_type in NODE_FEATURE_DIMS.keys():
+            all_x = [g[node_type].x for g in graphs if g[node_type].num_nodes > 0]
+            if all_x:
+                all_x = torch.cat(all_x, dim=0)
+                mean = all_x.mean(dim=0)
+                std = all_x.std(dim=0)
+                std[std < 1e-6] = 1.0
+                stats["nodes"][node_type] = {"mean": mean, "std": std}
+
+        all_edge_types = set()
+        for g in graphs:
+            all_edge_types.update(g.edge_types)
+        for edge_type in all_edge_types:
+            all_attr = [
+                g[edge_type].edge_attr
+                for g in graphs
+                if edge_type in g.edge_attr_dict and g[edge_type].num_edges > 0
+            ]
+            if all_attr:
+                all_attr = torch.cat(all_attr, dim=0)
+                mean = all_attr.mean(dim=0)
+                std = all_attr.std(dim=0)
+                std[std < 1e-6] = 1.0
+                stats["edges"]["_".join(edge_type)] = {"mean": mean, "std": std}
+        return stats
 
     def construct_graph(
         self, config: h5py.Group, step: h5py.Group, step_next: h5py.Group
@@ -70,20 +103,8 @@ class DatasetSim2D(InMemoryDataset):
 
         data = HeteroData()
 
-        node_world = [
-            [
-                config["dt"][()],
-                config["gravity"][0],
-                config["gravity"][1],
-                config["gravity"][2],
-            ]
-        ]
-        data["world"].x = torch.tensor(node_world, dtype=torch.float32)
-
         nodes_object = []
         preds_object = []
-        attrs_world_object = []
-        indices_world_object = []
         for i in range(config["num_shapes"][()]):
             nodes_object.append(
                 [
@@ -102,38 +123,15 @@ class DatasetSim2D(InMemoryDataset):
                     step_next["shapes_data"]["angular_velocity"][i],
                 ]
             )
-            attrs_world_object.append(
-                [
-                    step["shapes_data"]["translation"][i][0],
-                    step["shapes_data"]["translation"][i][1],
-                    norm(step["shapes_data"]["translation"][i]),
-                    step["shapes_data"]["rotation"][i],
-                ]
-            )
-            indices_world_object.append(
-                [0, i],
-            )
         data["object"].x = torch.tensor(nodes_object, dtype=torch.float32)
         data["object"].y = torch.tensor(preds_object, dtype=torch.float32)
-        data["world", "w2o", "object"].edge_attr = torch.tensor(
-            attrs_world_object, dtype=torch.float32
-        )
-        data["world", "w2o", "object"].edge_index = torch.tensor(
-            indices_world_object, dtype=torch.long
-        ).T
 
         if config["floor"]["active"][()]:
             data["floor"].x = torch.tensor(
                 [[config["floor"]["restitution"][()]]], dtype=torch.float32
             )
-            data["world", "w2f", "floor"].edge_attr = torch.tensor(
-                [[config["floor"]["height"][()]]], dtype=torch.float32
-            )
-            data["world", "w2f", "floor"].edge_index = torch.tensor([[0, 0]], dtype=torch.long).T
         else:
             data["floor"].x = torch.zeros((0, 1), dtype=torch.float32)
-            data["world", "w2f", "floor"].edge_attr = torch.zeros((0, 1), dtype=torch.float32)
-            data["world", "w2f", "floor"].edge_index = torch.zeros((2, 0), dtype=torch.long)
 
         attrs_object_object = []
         attrs_floor_object = []
