@@ -192,4 +192,4 @@ if __name__ == "__main__":
     parser.add_argument("--dataset_root", type=str)
     parser.add_argument("--idx", type=int)
     args = parser.parse_args()
-    visualize_hetero_graph(args.pt_path, args.idx)
+    visualize_hetero_graph(args.dataset_root, args.idx)

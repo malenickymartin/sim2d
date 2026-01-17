@@ -22,7 +22,7 @@ ARROW_SCALE = 2.5
 ROTATION_SCALE = 1.0
 
 
-def visualize_simulation(filepath: str):
+def visualize_simulation(filepath: str, save_path: str = None):
     """
     Visualizes the 2D physics simulation from an HDF5 log file.
     """
@@ -191,10 +191,13 @@ def visualize_simulation(filepath: str):
 
     # --- Update Function ---
     def update(frame):
-        idx = int(slider.val)
-        if sim_state.is_playing:
-            idx = (idx + 1) % num_steps
-            slider.set_val(idx)
+        if save_path:
+            idx = frame
+        else:
+            idx = int(slider.val)
+            if sim_state.is_playing:
+                idx = (idx + 1) % num_steps
+                slider.set_val(idx)
 
         # 1. Update Shape Positions
         current_trans = translations[idx]
@@ -358,13 +361,27 @@ def visualize_simulation(filepath: str):
     btn_jacobian.on_clicked(sim_state.toggle_jacobians)
 
     anim = animation.FuncAnimation(
-        fig, update, frames=None, interval=20, blit=False, cache_frame_data=False
+        fig, update, frames=num_steps, interval=20, blit=False, cache_frame_data=False
     )
-    plt.show()
+    if save_path:
+        print(f"Saving animation to {save_path}...")
+        if save_path.endswith(".gif"):
+            writer = "pillow"
+        else:
+            writer = "ffmpeg"
+        ax_slider.set_visible(False)
+        ax_play.set_visible(False)
+        ax_jac.set_visible(False)
+        anim.save(save_path, writer=writer, fps=30, dpi=300)
+        print("Save complete.")
+    else:
+        plt.show()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Visualize HDF5 Pass")
-    parser.add_argument("--hdf5_file_path", type=str)
+    parser.add_argument("--hdf_path", type=str, required=True)
+    parser.add_argument("--save_path", type=str, default=None)
     args = parser.parse_args()
-    visualize_simulation(args.hdf5_file_path)
+    args = parser.parse_args()
+    visualize_simulation(args.hdf_path, args.save_path)
