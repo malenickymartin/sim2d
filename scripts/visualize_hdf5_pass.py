@@ -118,8 +118,8 @@ def visualize_simulation(filepath: str, save_path: str = None):
     fig, ax = plt.subplots(figsize=(8, 6))
     plt.subplots_adjust(bottom=0.25)
 
-    ax.set_xlim(min_x - pad_x, max_x + pad_x)
-    ax.set_ylim(min_y - pad_y, max_y + pad_y)
+    ax.set_xlim(np.clip(min_x - pad_x, -100, 100), np.clip(max_x + pad_x, -100, 100))
+    ax.set_ylim(np.clip(min_y - pad_y, -100, 100), np.clip(max_y + pad_y, -100, 100))
     ax.set_aspect("equal")
     ax.grid(True, linestyle="--", alpha=0.6)
     ax.set_title("2D Physics Simulation")

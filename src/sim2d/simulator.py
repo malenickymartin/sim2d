@@ -106,6 +106,7 @@ class Simulator(ABC):
         c_local_idx = []
         c_dist = []
         c_jac = []
+        c_jac_neigh = []
         c_neigh = []
         c_counts = torch.zeros(self.num_shapes, dtype=torch.long, device=self.device)
         shapes = self.shapes + [self.floor] if not self.floor is None else self.shapes
@@ -127,6 +128,7 @@ class Simulator(ABC):
                         c_local_idx.append(c_counts[i].item())
                         c_dist.append(distance)
                         c_jac.append(J_1)
+                        c_jac_neigh.append(J_2)
                         c_counts[i] += 1
                         if i_2 != -1:
                             c_body_idx.append(i_2)
@@ -134,6 +136,7 @@ class Simulator(ABC):
                             c_local_idx.append(c_counts[i_2].item())
                             c_dist.append(distance)
                             c_jac.append(J_2)
+                            c_jac_neigh.append(J_1)
                             c_counts[i_2] += 1
 
         contacts = {
@@ -146,6 +149,11 @@ class Simulator(ABC):
                 if len(c_jac) > 0
                 else torch.empty((0, 3), dtype=torch.float32, device=self.device)
             ),
+            "jac_neigh": (
+                torch.stack(c_jac_neigh).to(self.device)
+                if len(c_jac_neigh) > 0
+                else torch.empty((0, 3), dtype=torch.float32, device=self.device)
+            ),
             "counts": c_counts,
             "is_equality": torch.zeros(len(c_body_idx), dtype=torch.bool, device=self.device),
         }
@@ -153,7 +161,7 @@ class Simulator(ABC):
 
     def process_joints(self):
         joint_log = {"count": 0, "indices": [], "error": [], "Js": []}
-        c_body_idx, c_neigh, c_jac, c_error = [], [], [], []
+        c_body_idx, c_neigh, c_jac, c_jac_neigh, c_error = [], [], [], [], []
         for joint in self.joints:
             shape_1 = self.shapes[joint.child_idx]
             shape_2 = self.shapes[joint.parent_idx] if joint.parent_idx != -1 else None
@@ -167,11 +175,13 @@ class Simulator(ABC):
                 c_body_idx.append(joint.child_idx)
                 c_neigh.append(joint.parent_idx)
                 c_jac.append(J_1)
+                c_jac_neigh.append(J_2)
                 c_error.append(error)
                 if joint.parent_idx != -1:
                     c_body_idx.append(joint.parent_idx)
                     c_neigh.append(joint.child_idx)
                     c_jac.append(J_2)
+                    c_jac_neigh.append(J_1)
                     c_error.append(-error)
         joints = {
             "body_idx": torch.tensor(c_body_idx, dtype=torch.long, device=self.device),
@@ -180,6 +190,11 @@ class Simulator(ABC):
             "jac": (
                 torch.stack(c_jac).to(self.device)
                 if len(c_jac) > 0
+                else torch.empty((0, 3), dtype=torch.float32, device=self.device)
+            ),
+            "jac_neigh": (
+                torch.stack(c_jac_neigh).to(self.device)
+                if len(c_jac_neigh) > 0
                 else torch.empty((0, 3), dtype=torch.float32, device=self.device)
             ),
         }
@@ -205,6 +220,7 @@ class Simulator(ABC):
                 ]
             ),
             "jac": torch.cat([contacts["jac"], joints["jac"]]),
+            "jac_neigh": torch.cat([contacts["jac_neigh"], joints["jac_neigh"]]),
             "dist": torch.cat([contacts["dist"], joints["error"]]),
             "is_equality": torch.cat(
                 [

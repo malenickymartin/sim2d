@@ -84,8 +84,10 @@ class EulerSolver:
         res[:, :3] = state[:, :3] - state_init[:, :3] - self.gravity * self.dt
         if constraints["body_idx"].numel() > 0:
             body_idxs = constraints["body_idx"]
+            neighbor_idxs = constraints["neighbor_idx"]
             local_idxs = constraints["local_idx"]
             jacobians = constraints["jac"]
+            jacobians_neigh = constraints["jac_neigh"]
             dists = constraints["dist"]
             is_equality = constraints["is_equality"]
 
@@ -104,6 +106,19 @@ class EulerSolver:
             )
             v_term = state[body_idxs, :3] + b_restitution
             b_scaled = (jacobians * v_term).sum(dim=1)
+            mask_neigh = neighbor_idxs != -1
+            if mask_neigh.any():
+                valid_neighs = neighbor_idxs[mask_neigh]
+                neigh_b_restitution = (
+                    self.restitutions[valid_neighs].unsqueeze(1) * state_init[valid_neighs, :3]
+                )
+                neigh_b_restitution = torch.where(
+                    is_equality[mask_neigh].unsqueeze(1),
+                    torch.zeros_like(neigh_b_restitution),
+                    neigh_b_restitution,
+                )
+                v_term_neigh = state[valid_neighs, :3] + neigh_b_restitution
+                b_scaled[mask_neigh] += (jacobians_neigh[mask_neigh] * v_term_neigh).sum(dim=1)
             a = b_scaled + b_error
             b = lambdas
             fb_vals = self.fischer_burmeister(a, b)
@@ -122,8 +137,10 @@ class EulerSolver:
             J[rows + k, rows + k] = 1.0
         if contacts["body_idx"].numel() > 0:
             body_idxs = contacts["body_idx"]
+            neighbor_idxs = contacts["neighbor_idx"]
             local_idxs = contacts["local_idx"]
             jacobians = contacts["jac"]
+            jacobians_neigh = contacts["jac_neigh"]
             dists = contacts["dist"]
             is_equality = contacts["is_equality"]
 
@@ -139,7 +156,23 @@ class EulerSolver:
                 is_equality.unsqueeze(1), torch.zeros_like(b_restitution), b_restitution
             )
             v_curr = state[body_idxs, :3]
-            a = (jacobians * (v_curr + b_restitution)).sum(dim=1) + b_error
+            a = (jacobians * (v_curr + b_restitution)).sum(dim=1)
+            mask_neigh = neighbor_idxs != -1
+            if mask_neigh.any():
+                valid_neighs = neighbor_idxs[mask_neigh]
+                neigh_b_restitution = (
+                    self.restitutions[valid_neighs].unsqueeze(1) * state_init[valid_neighs, :3]
+                )
+                neigh_b_restitution = torch.where(
+                    is_equality[mask_neigh].unsqueeze(1),
+                    torch.zeros_like(neigh_b_restitution),
+                    neigh_b_restitution,
+                )
+                v_neigh = state[valid_neighs, :3]
+                a[mask_neigh] += (
+                    jacobians_neigh[mask_neigh] * (v_neigh + neigh_b_restitution)
+                ).sum(dim=1)
+            a += b_error
             b = lambdas
             hypot = torch.sqrt(a**2 + b**2 + self.eps)
             d_da = 1.0 - a / hypot
@@ -149,6 +182,14 @@ class EulerSolver:
             row_lambda = base_rows + 3 + local_idxs
             for k in range(3):
                 J[row_lambda, base_rows + k] = d_da * jacobians[:, k]
+            if mask_neigh.any():
+                valid_neighs = neighbor_idxs[mask_neigh]
+                rows_neigh = row_lambda[mask_neigh]
+                cols_neigh_base = valid_neighs * n_vars
+                jac_n = jacobians_neigh[mask_neigh]
+                dda_n = d_da[mask_neigh]
+                for k in range(3):
+                    J[rows_neigh, cols_neigh_base + k] = dda_n * jac_n[:, k]
             J[row_lambda, col_lambda] = d_db
         return J
 

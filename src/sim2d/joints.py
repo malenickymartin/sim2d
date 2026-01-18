@@ -92,8 +92,7 @@ def compute_joint_constraints(
         R_2 = torch.eye(2, device=device)
 
     r_1, r_2 = R_1 @ joint.child_anchor, R_2 @ joint.parent_anchor
-    diff = (p_1 + r_1) - (p_2 + r_2)
-    diff = -diff
+    diff = (p_2 + r_2) - (p_1 + r_1)
 
     if isinstance(joint, RevoluteJoint):
         n_x = torch.tensor([1.0, 0.0], device=device)
