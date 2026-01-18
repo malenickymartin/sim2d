@@ -128,6 +128,14 @@ class Simulator(ABC):
                         c_dist.append(distance)
                         c_jac.append(J_1)
                         c_counts[i] += 1
+                        if i_2 != -1:
+                            c_body_idx.append(i_2)
+                            c_neigh.append(i)
+                            c_local_idx.append(c_counts[i_2].item())
+                            c_dist.append(distance)
+                            c_jac.append(J_2)
+                            c_counts[i_2] += 1
+
         contacts = {
             "body_idx": torch.tensor(c_body_idx, dtype=torch.long, device=self.device),
             "neighbor_idx": torch.tensor(c_neigh, dtype=torch.long, device=self.device),
