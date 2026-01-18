@@ -110,7 +110,7 @@ def point_circle(shape_1: Point, shape_2: Circle) -> tuple[bool, float, torch.Te
 def _get_rotation_matrix(theta: torch.Tensor) -> torch.Tensor:
     c = torch.cos(theta)
     s = torch.sin(theta)
-    return torch.tensor([[c, -s], [s, c]])
+    return torch.stack([c, -s, s, c]).view(2, 2)
 
 
 def _get_local_point(
@@ -129,9 +129,9 @@ def _get_world_vector(vec: torch.Tensor, rect_rot: torch.Tensor) -> torch.Tensor
 def _get_rect_corners(rect: Rectangle) -> torch.Tensor:
     half_w = rect.sides[0] / 2
     half_h = rect.sides[1] / 2
-    corners_local = torch.tensor(
-        [[half_w, half_h], [-half_w, half_h], [-half_w, -half_h], [half_w, -half_h]]
-    )
+    corners_local = torch.stack(
+        [half_w, half_h, -half_w, half_h, -half_w, -half_h, half_w, -half_h]
+    ).view(4, 2)
     R = _get_rotation_matrix(rect.rotation)
     corners_world = rect.translation + torch.matmul(corners_local, R.t())
     return corners_world
@@ -149,7 +149,7 @@ def _get_support_point(rect: Rectangle, direction: torch.Tensor) -> torch.Tensor
     half_h = rect.sides[1] / 2
     sx = half_w if dir_local[0] > 0 else -half_w
     sy = half_h if dir_local[1] > 0 else -half_h
-    p_local = torch.tensor([sx, sy])
+    p_local = torch.stack([sx, sy])
     R = _get_rotation_matrix(rect.rotation)
     return rect.translation + torch.matmul(R, p_local)
 
@@ -243,7 +243,9 @@ def point_rect(shape_1: Point, shape_2: Rectangle) -> tuple[bool, float, torch.T
 def rect_floor(shape_1: Rectangle, shape_2: Floor) -> tuple[bool, float, torch.Tensor]:
     active, collision_distance, J_1, J_2 = False, torch.tensor(0.0), torch.zeros(3), torch.zeros(3)
 
-    lowest_point = _get_support_point(shape_1, torch.tensor([0.0, -1.0]))
+    lowest_point = _get_support_point(
+        shape_1, torch.tensor([0.0, -1.0], device=shape_1.rotation.device)
+    )
 
     if lowest_point[1] < shape_2.translation[1]:
         active = True
@@ -269,7 +271,7 @@ def rect_circle(shape_1: Rectangle, shape_2: Circle) -> tuple[bool, float, torch
     half_w = shape_1.sides[0] / 2
     half_h = shape_1.sides[1] / 2
 
-    closest_local = torch.tensor(
+    closest_local = torch.stack(
         [torch.clamp(c_local[0], -half_w, half_w), torch.clamp(c_local[1], -half_h, half_h)]
     )
 
@@ -292,6 +294,7 @@ def rect_circle(shape_1: Rectangle, shape_2: Circle) -> tuple[bool, float, torch
             normal_local = torch.tensor([0.0, 1.0])
         else:
             normal_local = torch.tensor([0.0, -1.0])
+        normal_local = normal_local.to(c_local.device)
 
         collision_distance = shape_2.radius + min_dist
         contact_local = c_local + normal_local * min_dist

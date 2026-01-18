@@ -1,7 +1,9 @@
+from abc import ABC
+
 import torch
 
 
-class Shape:
+class Shape(ABC):
     def __init__(
         self,
         translation: torch.Tensor,
@@ -63,6 +65,10 @@ class Circle(Shape):
         )
         self.radius = torch.as_tensor(radius)
 
+    def to(self, device: torch.device):
+        self.radius = self.radius.to(device)
+        super().to(device)
+
 
 class Point(Shape):
     def __init__(
@@ -95,13 +101,17 @@ class Rectangle(Shape):
     ):
         super().__init__(
             translation,
-            torch.tensor(rotation),
+            torch.as_tensor(rotation),
             velocity,
-            torch.tensor(angular_velocity),
+            torch.as_tensor(angular_velocity),
             mass,
             restitution,
         )
         self.sides = torch.as_tensor(sides)
+
+    def to(self, device: torch.device):
+        self.sides = self.sides.to(device)
+        super().to(device)
 
 
 SHAPE_TO_INT = {Floor: -1, Circle: 0, Point: 1, Rectangle: 2}

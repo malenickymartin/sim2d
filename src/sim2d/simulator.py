@@ -12,6 +12,7 @@ from .collisions import compute_collision
 from .shapes import Floor
 from .shapes import Shape
 from .logger import EngineLogger, LoggingConfig
+from .joints import Joint, compute_joint_constraints
 
 
 class Simulator(ABC):
@@ -31,6 +32,7 @@ class Simulator(ABC):
         self.gravity = gravity.to(self.device)
         self.dt = dt
         self.shapes: list[Shape] = []
+        self.joints: list[Joint] = []
         self.floor = None
 
         if logging_config is None:
@@ -43,6 +45,8 @@ class Simulator(ABC):
         assert not Floor in [type(s) for s in self.shapes], "Floor should be saved in self.floor"
         for shape in self.shapes:
             shape.to(self.device)
+        for joint in self.joints:
+            joint.to(self.device)
 
         self.gnn = None
         if not init_gnn_path is None:
@@ -71,15 +75,22 @@ class Simulator(ABC):
         with torch.no_grad():
             for i in tqdm(range(self.num_steps), desc="Simulation"):
                 current_time = i * self.dt
-                with self.logger.timed_block("collision_detection"):
-                    contacts, contact_log = self.collide()
-                self.logger.log_step_data(i, current_time, self.shapes, state, contact_log)
+                with self.logger.timed_block("contacts_and_joints"):
+                    contacts_dict, contact_log = self.collide()
+                    joints_dict, joint_log = self.process_joints()
+                    all_constraints = self.merge_constraints(contacts_dict, joints_dict)
+                self.logger.log_step_data(
+                    i, current_time, self.shapes, state, contact_log, joint_log
+                )
                 with self.logger.timed_block("physics_step"):
-                    state = self.solver.step(i, state, contacts)
+                    state = self.solver.step(i, state, all_constraints)
                 with self.logger.timed_block("update_shapes"):
                     self.update_shapes(state)
         _, contact_log = self.collide()
-        self.logger.log_step_data(i + 1, current_time + self.dt, self.shapes, state, contact_log)
+        _, joint_log = self.process_joints()
+        self.logger.log_step_data(
+            i + 1, current_time + self.dt, self.shapes, state, contact_log, joint_log
+        )
         self.logger.close()
 
     def update_shapes(self, state):
@@ -117,13 +128,6 @@ class Simulator(ABC):
                         c_dist.append(distance)
                         c_jac.append(J_1)
                         c_counts[i] += 1
-                        if not isinstance(shape_2, Floor):
-                            c_body_idx.append(j)
-                            c_neigh.append(i)
-                            c_local_idx.append(c_counts[j].item())
-                            c_dist.append(distance)
-                            c_jac.append(J_2)
-                            c_counts[j] += 1
         contacts = {
             "body_idx": torch.tensor(c_body_idx, dtype=torch.long, device=self.device),
             "neighbor_idx": torch.tensor(c_neigh, dtype=torch.long, device=self.device),
@@ -135,8 +139,74 @@ class Simulator(ABC):
                 else torch.empty((0, 3), dtype=torch.float32, device=self.device)
             ),
             "counts": c_counts,
+            "is_equality": torch.zeros(len(c_body_idx), dtype=torch.bool, device=self.device),
         }
         return contacts, contact_log
+
+    def process_joints(self):
+        joint_log = {"count": 0, "indices": [], "error": [], "Js": []}
+        c_body_idx, c_neigh, c_jac, c_error = [], [], [], []
+        for joint in self.joints:
+            shape_1 = self.shapes[joint.child_idx]
+            shape_2 = self.shapes[joint.parent_idx] if joint.parent_idx != -1 else None
+            constrs = compute_joint_constraints(joint, shape_1, shape_2, self.device)
+            for J_1, J_2, error in constrs:
+                if self.logger.config.enable_hdf5:
+                    joint_log["count"] += 1
+                    joint_log["error"].append(float(error))
+                    joint_log["Js"].append((J_1.cpu(), J_2.cpu()))
+                    joint_log["indices"].append((joint.child_idx, joint.parent_idx))
+                c_body_idx.append(joint.child_idx)
+                c_neigh.append(joint.parent_idx)
+                c_jac.append(J_1)
+                c_error.append(error)
+                if joint.parent_idx != -1:
+                    c_body_idx.append(joint.parent_idx)
+                    c_neigh.append(joint.child_idx)
+                    c_jac.append(J_2)
+                    c_error.append(-error)
+        joints = {
+            "body_idx": torch.tensor(c_body_idx, dtype=torch.long, device=self.device),
+            "neighbor_idx": torch.tensor(c_neigh, dtype=torch.long, device=self.device),
+            "error": torch.tensor(c_error, dtype=torch.float32, device=self.device),
+            "jac": (
+                torch.stack(c_jac).to(self.device)
+                if len(c_jac) > 0
+                else torch.empty((0, 3), dtype=torch.float32, device=self.device)
+            ),
+        }
+        return joints, joint_log
+
+    def merge_constraints(self, contacts, joints):
+        if not len(joints["body_idx"]) > 0:
+            return contacts
+
+        counts = contacts["counts"].clone()
+        joints_local_idx = []
+        for b in joints["body_idx"]:
+            joints_local_idx.append(counts[b].item())
+            counts[b] += 1
+
+        merged = {
+            "body_idx": torch.cat([contacts["body_idx"], joints["body_idx"]]),
+            "neighbor_idx": torch.cat([contacts["neighbor_idx"], joints["neighbor_idx"]]),
+            "local_idx": torch.cat(
+                [
+                    contacts["local_idx"],
+                    torch.tensor(joints_local_idx, dtype=torch.long, device=self.device),
+                ]
+            ),
+            "jac": torch.cat([contacts["jac"], joints["jac"]]),
+            "dist": torch.cat([contacts["dist"], joints["error"]]),
+            "is_equality": torch.cat(
+                [
+                    contacts["is_equality"],
+                    torch.ones_like(joints["body_idx"], dtype=torch.bool, device=self.device),
+                ]
+            ),
+            "counts": counts,
+        }
+        return merged
 
     def update_gnn_data(self, state: torch.Tensor, contacts: torch.Tensor):
         gnn_data = HeteroData()
@@ -223,20 +293,20 @@ class Simulator(ABC):
 
         return state_guess
 
-    def init_state_fn(self, state: torch.Tensor, contacts: torch.Tensor, dt: float):
+    def init_state_fn(self, state: torch.Tensor, constraints: torch.Tensor, dt: float):
         """
         return guess for next state of shape (self.num_shapes x 3+max([len(a) for a in contacts]))
         """
         if self.gnn is None:
-            state_guess = torch.zeros(self.solver.state_shape(contacts), device=self.device)
+            state_guess = torch.zeros(self.solver.state_shape(constraints), device=self.device)
             state_guess[:, :3] += state[:, :3]
             state_guess[:, :3] += dt * self.gravity
         else:
-            gnn_data = self.update_gnn_data(state, contacts)
+            gnn_data = self.update_gnn_data(state, constraints)
             gnn_output = self.gnn(
                 gnn_data.x_dict, gnn_data.edge_index_dict, gnn_data.edge_attr_dict
             )
-            state_guess = self.state_from_gnn(gnn_output, contacts)
+            state_guess = self.state_from_gnn(gnn_output, constraints)
 
         return state_guess
 

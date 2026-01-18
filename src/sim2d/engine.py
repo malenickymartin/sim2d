@@ -38,16 +38,16 @@ class EulerSolver:
 
         self.num_shapes = len(shapes)
 
-    def step(self, step_idx: int, state: torch.Tensor, contacts: dict) -> torch.Tensor:
+    def step(self, step_idx: int, state: torch.Tensor, constraints: dict) -> torch.Tensor:
         state_init = state.clone()
         with self.logger.timed_block("initial_guess"):
-            state: torch.Tensor = self.init_state_fn(state, contacts, self.dt).clone()
+            state: torch.Tensor = self.init_state_fn(state, constraints, self.dt).clone()
         assert state.shape == self.state_shape(
-            contacts
-        ), f"State shape is not correct. Expected: {self.state_shape(contacts)}, got {state.shape}."
+            constraints
+        ), f"State shape is not correct. Expected: {self.state_shape(constraints)}, got {state.shape}."
         with self.logger.timed_block("newton_solve"):
             for i in range(self.newton_iters):
-                res_val: torch.Tensor = self.resudial_fn(state, state_init, contacts)
+                res_val: torch.Tensor = self.resudial_fn(state, state_init, constraints)
                 if torch.norm(res_val) < self.atol:
                     self.logger.log_engine_data(
                         step_idx, i, state.shape, res_val.detach(), torch.Tensor(), torch.Tensor()
@@ -55,12 +55,12 @@ class EulerSolver:
                     return state.detach()
                 with self.logger.timed_block("linearization"):
                     if self.analytical_jac:
-                        J = self.compute_jacobian(state, state_init, contacts)
+                        J = self.compute_jacobian(state, state_init, constraints)
                     else:
                         with torch.enable_grad():
                             state_var = state.detach().requires_grad_(True)
                             J = torch.autograd.functional.jacobian(
-                                lambda z: self.resudial_fn(z, state_init, contacts), state_var
+                                lambda z: self.resudial_fn(z, state_init, constraints), state_var
                             )
                             if J.dim() > 2:
                                 J = J.view(J.shape[0], -1)
@@ -78,15 +78,16 @@ class EulerSolver:
                     return state.detach()
         return state.detach()
 
-    def resudial_fn(self, state: torch.Tensor, state_init: torch.Tensor, contacts):
+    def resudial_fn(self, state: torch.Tensor, state_init: torch.Tensor, constraints):
         res = torch.zeros_like(state)
         res[:, 3:] = state[:, 3:]
         res[:, :3] = state[:, :3] - state_init[:, :3] - self.gravity * self.dt
-        if contacts["body_idx"].numel() > 0:
-            body_idxs = contacts["body_idx"]
-            local_idxs = contacts["local_idx"]
-            jacobians = contacts["jac"]
-            dists = contacts["dist"]
+        if constraints["body_idx"].numel() > 0:
+            body_idxs = constraints["body_idx"]
+            local_idxs = constraints["local_idx"]
+            jacobians = constraints["jac"]
+            dists = constraints["dist"]
+            is_equality = constraints["is_equality"]
 
             lambdas = state[body_idxs, 3 + local_idxs]
             force_impulse = -lambdas.unsqueeze(1) * jacobians
@@ -98,50 +99,57 @@ class EulerSolver:
 
             b_error = -(self.beta / self.dt) * dists
             b_restitution = self.restitutions[body_idxs].unsqueeze(1) * state_init[body_idxs, :3]
+            b_restitution = torch.where(
+                is_equality.unsqueeze(1), torch.zeros_like(b_restitution), b_restitution
+            )
             v_term = state[body_idxs, :3] + b_restitution
             b_scaled = (jacobians * v_term).sum(dim=1)
             a = b_scaled + b_error
             b = lambdas
             fb_vals = self.fischer_burmeister(a, b)
-            res[body_idxs, 3 + local_idxs] = fb_vals
+            final_vals = torch.where(is_equality, a, fb_vals)
+            res[body_idxs, 3 + local_idxs] = final_vals
         return torch.flatten(res)
 
     def compute_jacobian(self, state: torch.Tensor, state_init: torch.Tensor, contacts: dict):
         n_shapes, n_vars = state.shape
         total_vars = n_shapes * n_vars
         J = torch.zeros((total_vars, total_vars), device=self.device)
-        shape_indices = torch.arange(n_shapes, device=self.device)
-        row_starts = shape_indices * n_vars
-        col_starts = shape_indices * n_vars
+        rows = torch.arange(n_shapes, device=self.device) * n_vars
         for k in range(3):
-            J[row_starts + k, col_starts + k] = 1.0
+            J[rows + k, rows + k] = 1.0
         for k in range(3, n_vars):
-            diag_idx = row_starts + k
-            J[diag_idx, diag_idx] = 1.0
+            J[rows + k, rows + k] = 1.0
         if contacts["body_idx"].numel() > 0:
             body_idxs = contacts["body_idx"]
             local_idxs = contacts["local_idx"]
             jacobians = contacts["jac"]
             dists = contacts["dist"]
+            is_equality = contacts["is_equality"]
+
             inv_masses = 1.0 / self.masses[body_idxs]
             lambdas = state[body_idxs, 3 + local_idxs]
             base_rows = body_idxs * n_vars
-            base_cols = body_idxs * n_vars
-            col_lambda = base_cols + 3 + local_idxs
+            col_lambda = base_rows + 3 + local_idxs
             for k in range(3):
                 J[base_rows + k, col_lambda] = -jacobians[:, k] * inv_masses
             b_error = -(self.beta / self.dt) * dists
             b_restitution = self.restitutions[body_idxs].unsqueeze(1) * state_init[body_idxs, :3]
+            b_restitution = torch.where(
+                is_equality.unsqueeze(1), torch.zeros_like(b_restitution), b_restitution
+            )
             v_curr = state[body_idxs, :3]
             a = (jacobians * (v_curr + b_restitution)).sum(dim=1) + b_error
             b = lambdas
             hypot = torch.sqrt(a**2 + b**2 + self.eps)
-            dFB_da = 1.0 - a / hypot
-            dFB_db = 1.0 - b / hypot
+            d_da = 1.0 - a / hypot
+            d_db = 1.0 - b / hypot
+            d_da = torch.where(is_equality, torch.ones_like(a), d_da)
+            d_db = torch.where(is_equality, torch.zeros_like(b), d_db)
             row_lambda = base_rows + 3 + local_idxs
             for k in range(3):
-                J[row_lambda, base_cols + k] = dFB_da * jacobians[:, k]
-            J[row_lambda, col_lambda] = dFB_db
+                J[row_lambda, base_rows + k] = d_da * jacobians[:, k]
+            J[row_lambda, col_lambda] = d_db
         return J
 
     def fischer_burmeister(self, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:

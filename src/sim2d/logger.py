@@ -157,6 +157,7 @@ class EngineLogger:
         shapes: list[Shape],
         state: torch.Tensor,
         contact_log: dict,
+        joint_log: dict,
     ):
         if not self.hdf5_logger:
             return
@@ -176,6 +177,12 @@ class EngineLogger:
                 self.hdf5_logger.log_data("indices", contact_log["indices"])
                 self.hdf5_logger.log_data("distances", contact_log["distances"])
                 self.hdf5_logger.log_data("Js", contact_log["Js"])
+            with self.hdf5_logger.scope("joint_data"):
+                self.hdf5_logger.log_data("lambdas", state[:, 3:].cpu())
+                self.hdf5_logger.log_data("count", joint_log["count"])
+                self.hdf5_logger.log_data("indices", joint_log["indices"])
+                self.hdf5_logger.log_data("error", joint_log["error"])
+                self.hdf5_logger.log_data("Js", joint_log["Js"])
 
     def log_engine_data(
         self,

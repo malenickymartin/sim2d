@@ -1,0 +1,155 @@
+from abc import ABC
+
+import torch
+
+from .shapes import Shape
+
+
+class Joint(ABC):
+    def __init__(
+        self,
+        child_idx: int,
+        parent_idx: int,
+        child_anchor: torch.Tensor,
+        parent_anchor: torch.Tensor,
+    ):
+        self.child_idx: int = child_idx
+        self.parent_idx: int = parent_idx  # If -1, parent is static world
+        self.child_anchor = child_anchor
+        self.parent_anchor = parent_anchor
+
+    def to(self, device: torch.device):
+        self.child_anchor = self.child_anchor.to(device)
+        self.parent_anchor = self.parent_anchor.to(device)
+
+
+class FixedJoint(Joint):
+    def __init__(
+        self,
+        child_idx: int,
+        parent_idx: int,
+        child_anchor: torch.Tensor,
+        parent_anchor: torch.Tensor,
+        target_rotation: float,
+    ):
+        super().__init__(child_idx, parent_idx, child_anchor, parent_anchor)
+        self.target_rotation = target_rotation
+
+
+class PrismaticJoint(Joint):
+    def __init__(
+        self,
+        child_idx: int,
+        parent_idx: int,
+        child_anchor: torch.Tensor,
+        parent_anchor: torch.Tensor,
+        axis: torch.Tensor = torch.Tensor([1.0, 0.0]),
+    ):
+        super().__init__(child_idx, parent_idx, child_anchor, parent_anchor)
+        self.axis: torch.Tensor = axis
+
+    def to(self, device: torch.device):
+        self.axis = self.axis.to(device)
+        super().to(device)
+
+
+class RevoluteJoint(Joint):
+    def __init__(
+        self,
+        child_idx,
+        parent_idx,
+        child_anchor: torch.Tensor,
+        parent_anchor: torch.Tensor,
+    ):
+        super().__init__(child_idx, parent_idx, child_anchor, parent_anchor)
+
+
+def _rot_matrix(theta):
+    c, s = torch.cos(theta), torch.sin(theta)
+    return torch.stack([c, -s, s, c]).view(2, 2)
+
+
+def _perp(v):
+    return torch.stack([-v[1], v[0]])
+
+
+def compute_joint_constraints(
+    joint: Joint, shape_1: Shape, shape_2: Shape | None, device: torch.device
+):
+    constraints = []
+
+    p_1 = shape_1.translation
+    theta_1 = shape_1.rotation
+    R_1 = _rot_matrix(theta_1)
+
+    if shape_2 is not None:
+        p_2 = shape_2.translation
+        theta_2 = shape_2.rotation
+        R_2 = _rot_matrix(theta_2)
+    else:
+        p_2 = torch.zeros(2, device=device)
+        theta_2 = torch.tensor(0.0, device=device)
+        R_2 = torch.eye(2, device=device)
+
+    r_1, r_2 = R_1 @ joint.child_anchor, R_2 @ joint.parent_anchor
+    diff = (p_1 + r_1) - (p_2 + r_2)
+    diff = -diff
+
+    if isinstance(joint, RevoluteJoint):
+        n_x = torch.tensor([1.0, 0.0], device=device)
+        J1_x, J2_x = torch.zeros(3, device=device), torch.zeros(3, device=device)
+        J1_x[:2] = n_x
+        J1_x[2] = _perp(r_1).dot(n_x)
+        if shape_2:
+            J2_x[:2] = -n_x
+            J2_x[2] = _perp(r_2).dot(-n_x)
+        constraints.append((J1_x, J2_x, diff[0]))
+
+        n_y = torch.tensor([0.0, 1.0], device=device)
+        J1_y, J2_y = torch.zeros(3, device=device), torch.zeros(3, device=device)
+        J1_y[:2] = n_y
+        J1_y[2] = _perp(r_1).dot(n_y)
+        if shape_2:
+            J2_y[:2] = -n_y
+            J2_y[2] = _perp(r_2).dot(-n_y)
+        constraints.append((J1_y, J2_y, diff[1]))
+
+    elif isinstance(joint, FixedJoint):
+        for i, n in enumerate(
+            [torch.tensor([1.0, 0.0], device=device), torch.tensor([0.0, 1.0], device=device)]
+        ):
+            J1, J2 = torch.zeros(3, device=device), torch.zeros(3, device=device)
+            J1[:2] = n
+            J1[2] = _perp(r_1).dot(n)
+            if shape_2:
+                J2[:2] = -n
+                J2[2] = _perp(r_2).dot(-n)
+            constraints.append((J1, J2, diff[i]))
+
+        ang_diff = (theta_1 - theta_2) + joint.target_rotation
+        J1_a = torch.tensor([0.0, 0.0, 1.0], device=device)
+        J2_a = torch.tensor([0.0, 0.0, -1.0], device=device)
+        constraints.append((J1_a, J2_a, ang_diff))
+
+    elif isinstance(joint, PrismaticJoint):
+        ang_diff = theta_1 - theta_2
+        J1_a = torch.tensor([0.0, 0.0, 1.0], device=device)
+        J2_a = torch.tensor([0.0, 0.0, -1.0], device=device)
+        constraints.append((J1_a, J2_a, ang_diff))
+
+        axis_world = R_1 @ joint.axis
+        perp_axis = _perp(axis_world)
+        dist_perp = diff.dot(perp_axis)
+
+        J1_p = torch.zeros(3, device=device)
+        J1_p[:2] = perp_axis
+        J1_p[2] = diff.dot(axis_world) + _perp(r_1).dot(perp_axis)
+
+        J2_p = torch.zeros(3, device=device)
+        if shape_2:
+            J2_p[:2] = -perp_axis
+            J2_p[2] = _perp(r_2).dot(-perp_axis)
+
+        constraints.append((J1_p, J2_p, dist_perp))
+
+    return constraints
