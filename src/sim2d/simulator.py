@@ -33,6 +33,7 @@ class Simulator(ABC):
         self.dt = dt
         self.shapes: list[Shape] = []
         self.joints: list[Joint] = []
+        self.ignore_contacts: list[tuple[int]] = []
         self.floor = None
 
         if logging_config is None:
@@ -113,6 +114,8 @@ class Simulator(ABC):
         if len(shapes) >= 2:
             for i, shape_1 in enumerate(shapes):
                 for j, shape_2 in enumerate(shapes[i + 1 :], i + 1):
+                    if (i, j) in self.ignore_contacts or (j, i) in self.ignore_contacts:
+                        continue
                     in_collision, distance, J_1, J_2 = compute_collision(
                         shape_1, shape_2, self.device
                     )
@@ -130,14 +133,6 @@ class Simulator(ABC):
                         c_jac.append(J_1)
                         c_jac_neigh.append(J_2)
                         c_counts[i] += 1
-                        if i_2 != -1:
-                            c_body_idx.append(i_2)
-                            c_neigh.append(i)
-                            c_local_idx.append(c_counts[i_2].item())
-                            c_dist.append(distance)
-                            c_jac.append(J_2)
-                            c_jac_neigh.append(J_1)
-                            c_counts[i_2] += 1
 
         contacts = {
             "body_idx": torch.tensor(c_body_idx, dtype=torch.long, device=self.device),
@@ -177,12 +172,6 @@ class Simulator(ABC):
                 c_jac.append(J_1)
                 c_jac_neigh.append(J_2)
                 c_error.append(error)
-                if joint.parent_idx != -1:
-                    c_body_idx.append(joint.parent_idx)
-                    c_neigh.append(joint.child_idx)
-                    c_jac.append(J_2)
-                    c_jac_neigh.append(J_1)
-                    c_error.append(-error)
         joints = {
             "body_idx": torch.tensor(c_body_idx, dtype=torch.long, device=self.device),
             "neighbor_idx": torch.tensor(c_neigh, dtype=torch.long, device=self.device),
