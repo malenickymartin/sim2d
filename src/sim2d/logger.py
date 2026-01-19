@@ -17,6 +17,7 @@ import torch
 from .shapes import Shape
 from .shapes import Floor
 from .shapes import shape_to_int
+from .joints import joint_to_int
 
 
 @dataclass
@@ -125,23 +126,25 @@ class EngineLogger:
             return
 
         with self.hdf5_logger.scope("init_config"):
-            self.hdf5_logger.log_data("num_shapes", len(sim.shapes))
-            self.hdf5_logger.log_data("shape_types", [shape_to_int(s) for s in sim.shapes])
-            self.hdf5_logger.log_data("masses", [s.mass.cpu() for s in sim.shapes])
-            self.hdf5_logger.log_data("restitutions", [s.restitution.cpu() for s in sim.shapes])
-
-            radii = []
-            for s in sim.shapes:
-                radii.append(getattr(s, "radius", torch.tensor(0.0)).cpu())
-            self.hdf5_logger.log_data("radii", radii)
-            sides = []
-            for s in sim.shapes:
-                sides.append(getattr(s, "sides", torch.tensor([0.0, 0.0])).cpu())
-            self.hdf5_logger.log_data("sides", sides)
-
             self.hdf5_logger.log_data("gravity", sim.gravity.cpu())
             self.hdf5_logger.log_data("dt", sim.dt)
             self.hdf5_logger.log_data("newton_iters", sim.newton_iters)
+
+            with self.hdf5_logger.scope("shapes"):
+                self.hdf5_logger.log_data("num_shapes", len(sim.shapes))
+                self.hdf5_logger.log_data("shape_types", [shape_to_int(s) for s in sim.shapes])
+                self.hdf5_logger.log_data("masses", [s.mass.cpu() for s in sim.shapes])
+                self.hdf5_logger.log_data("restitutions", [s.restitution.cpu() for s in sim.shapes])
+                self.hdf5_logger.log_data("ignored_contacts", sim.ignore_contacts)
+                radii = []
+                for s in sim.shapes:
+                    radii.append(getattr(s, "radius", torch.tensor(0.0)).cpu())
+                self.hdf5_logger.log_data("radii", radii)
+                sides = []
+                for s in sim.shapes:
+                    sides.append(getattr(s, "sides", torch.tensor([0.0, 0.0])).cpu())
+                self.hdf5_logger.log_data("sides", sides)
+
             with self.hdf5_logger.scope("floor"):
                 if not sim.floor is None:
                     self.hdf5_logger.log_data("active", True)
@@ -149,6 +152,26 @@ class EngineLogger:
                     self.hdf5_logger.log_data("height", sim.floor.height.cpu())
                 else:
                     self.hdf5_logger.log_data("active", False)
+
+            with self.hdf5_logger.scope("joints"):
+                joints_target_rotation = []
+                joints_axis = []
+                for joint in sim.joints:
+                    joints_target_rotation.append(
+                        getattr(joint, "target_rotation", torch.tensor(0.0)).cpu()
+                    )
+                    joints_axis.append(getattr(joint, "axis", torch.tensor([0.0, 0.0])).cpu())
+                self.hdf5_logger.log_data("joint_types", [joint_to_int(j) for j in sim.joints])
+                self.hdf5_logger.log_data("child_idxs", [j.child_idx for j in sim.joints])
+                self.hdf5_logger.log_data("parent_idxs", [j.parent_idx for j in sim.joints])
+                self.hdf5_logger.log_data("target_rotation", joints_target_rotation)
+                self.hdf5_logger.log_data("axis", joints_axis)
+                self.hdf5_logger.log_data(
+                    "child_anchors", [j.child_anchor.cpu() for j in sim.joints]
+                )
+                self.hdf5_logger.log_data(
+                    "parent_anchors", [j.parent_anchor.cpu() for j in sim.joints]
+                )
 
     def log_step_data(
         self,

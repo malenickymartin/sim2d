@@ -64,6 +64,25 @@ class RevoluteJoint(Joint):
         super().__init__(child_idx, parent_idx, child_anchor, parent_anchor)
 
 
+JOINT_TO_INT = {FixedJoint: -1, PrismaticJoint: 0, RevoluteJoint: 1}
+INT_TO_JOINT = {v: k for k, v in JOINT_TO_INT.items()}
+
+
+def joint_to_int(joint):
+    joint_type = type(joint)
+    assert (
+        joint_type in JOINT_TO_INT.keys()
+    ), f"Unknown joint type. Joint type: {joint_type}, known types: {JOINT_TO_INT.keys()}"
+    return JOINT_TO_INT[joint_type]
+
+
+def int_to_joint(i: int):
+    assert (
+        i in INT_TO_JOINT.keys()
+    ), f"Unknown joint type. Joint type: {i}, known types: {INT_TO_JOINT.keys()}"
+    return INT_TO_JOINT[i]
+
+
 def _rot_matrix(theta):
     c, s = torch.cos(theta), torch.sin(theta)
     return torch.stack([c, -s, s, c]).view(2, 2)

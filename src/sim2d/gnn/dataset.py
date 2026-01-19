@@ -105,11 +105,11 @@ class DatasetSim2D(InMemoryDataset):
 
         nodes_object = []
         preds_object = []
-        for i in range(config["num_shapes"][()]):
+        for i in range(config["shapes"]["num_shapes"][()]):
             nodes_object.append(
                 [
-                    config["restitutions"][i],
-                    config["masses"][i],
+                    config["shapes"]["restitutions"][i],
+                    config["shapes"]["masses"][i],
                     step["shapes_data"]["velocity"][i][0],
                     step["shapes_data"]["velocity"][i][1],
                     norm(step["shapes_data"]["velocity"][i]),
@@ -139,7 +139,7 @@ class DatasetSim2D(InMemoryDataset):
         indices_floor_object = []
         preds_object_object = []
         preds_floor_object = []
-        object_lambda_counter = {i: 0 for i in range(config["num_shapes"][()])}
+        object_lambda_counter = {i: 0 for i in range(config["shapes"]["num_shapes"][()])}
         for i in range(step["contacts_data"]["count"][()]):
             idx_1, idx_2 = step["contacts_data"]["indices"][i]
             J_1, J_2 = step["contacts_data"]["Js"][i]

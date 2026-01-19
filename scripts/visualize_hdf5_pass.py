@@ -34,19 +34,19 @@ def visualize_simulation(filepath: str, save_path: str = None):
             raise ValueError("Invalid log file: 'init_config' group missing.")
 
         config = f["init_config"]
-        num_shapes = config["num_shapes"][()]
-        shape_types = config["shape_types"][:]
+        num_shapes = config["shapes"]["num_shapes"][()]
+        shape_types = config["shapes"]["shape_types"][:]
 
         # Load Radii
-        if "radii" in config:
-            radii = config["radii"][:]
+        if "radii" in config["shapes"]:
+            radii = config["shapes"]["radii"][:]
         else:
             print("Warning: 'radii' not found in log. Using defaults.")
             radii = np.ones(num_shapes) * 0.5
 
         # Load Sides (for Rectangles)
-        if "sides" in config:
-            sides = config["sides"][:]
+        if "sides" in config["shapes"]:
+            sides = config["shapes"]["sides"][:]
         else:
             sides = np.zeros((num_shapes, 2))
 

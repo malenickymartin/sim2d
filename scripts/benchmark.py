@@ -29,11 +29,11 @@ class SimulatorBenchmark(sim2d.Simulator):
             self.num_steps = len([k for k in f.keys() if k.startswith("step_")]) - 1
 
             self.shapes = []
-            num_shapes = int(config["num_shapes"][()])
-            masses = config["masses"][()]
-            restitutions = config["restitutions"][()]
-            radii = config["radii"][()]
-            types = config["shape_types"][()]
+            num_shapes = int(config["shapes"]["num_shapes"][()])
+            masses = config["shapes"]["masses"][()]
+            restitutions = config["shapes"]["restitutions"][()]
+            radii = config["shapes"]["radii"][()]
+            types = config["shapes"]["shape_types"][()]
             for i in range(num_shapes):
                 if sim2d.shapes.int_to_shape(types[i]) == sim2d.shapes.Circle:
                     shape = sim2d.shapes.Circle(
