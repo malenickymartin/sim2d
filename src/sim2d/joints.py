@@ -15,8 +15,8 @@ class Joint(ABC):
     ):
         self.child_idx: int = child_idx
         self.parent_idx: int = parent_idx  # If -1, parent is static world
-        self.child_anchor = torch.as_tensor(child_anchor)
-        self.parent_anchor = torch.as_tensor(parent_anchor)
+        self.child_anchor = torch.as_tensor(child_anchor, dtype=torch.float32)
+        self.parent_anchor = torch.as_tensor(parent_anchor, dtype=torch.float32)
 
     def to(self, device: torch.device):
         self.child_anchor = self.child_anchor.to(device)
@@ -34,8 +34,8 @@ class FixedJoint(Joint):
         parent_target_rotation: float = 0.0,
     ):
         super().__init__(child_idx, parent_idx, child_anchor, parent_anchor)
-        self.child_target_rotation = torch.as_tensor(child_target_rotation)
-        self.parent_target_rotation = torch.as_tensor(parent_target_rotation)
+        self.child_target_rotation = torch.as_tensor(child_target_rotation, dtype=torch.float32)
+        self.parent_target_rotation = torch.as_tensor(parent_target_rotation, dtype=torch.float32)
 
     def to(self, device: torch.device):
         self.child_target_rotation = self.child_target_rotation.to(device)
@@ -53,7 +53,7 @@ class PrismaticJoint(Joint):
         axis: torch.Tensor = torch.Tensor([1.0, 0.0]),
     ):
         super().__init__(child_idx, parent_idx, child_anchor, parent_anchor)
-        self.axis = torch.as_tensor(axis)
+        self.axis = torch.as_tensor(axis, dtype=torch.float32)
 
     def to(self, device: torch.device):
         self.axis = self.axis.to(device)
