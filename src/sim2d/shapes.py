@@ -70,7 +70,7 @@ class Circle(Shape):
         super().to(device)
 
 
-class Point(Shape):
+class Point(Circle):
     def __init__(
         self,
         translation: torch.Tensor,
@@ -80,11 +80,10 @@ class Point(Shape):
     ):
         super().__init__(
             translation,
-            torch.tensor(0.0),
             velocity,
-            torch.tensor(0.0),
             mass,
             restitution,
+            radius=torch.tensor(0.0),
         )
 
 

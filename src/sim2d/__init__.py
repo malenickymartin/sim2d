@@ -1,3 +1,4 @@
+from .shapes import Shape
 from .shapes import Floor
 from .shapes import Circle
 from .shapes import Point

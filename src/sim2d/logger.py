@@ -161,6 +161,7 @@ class EngineLogger:
                         getattr(joint, "target_rotation", torch.tensor(0.0)).cpu()
                     )
                     joints_axis.append(getattr(joint, "axis", torch.tensor([0.0, 0.0])).cpu())
+                self.hdf5_logger.log_data("num_joints", len(sim.joints))
                 self.hdf5_logger.log_data("joint_types", [joint_to_int(j) for j in sim.joints])
                 self.hdf5_logger.log_data("child_idxs", [j.child_idx for j in sim.joints])
                 self.hdf5_logger.log_data("parent_idxs", [j.parent_idx for j in sim.joints])

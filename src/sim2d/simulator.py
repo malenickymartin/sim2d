@@ -97,7 +97,9 @@ class Simulator(ABC):
     def update_shapes(self, state):
         for i in range(self.num_shapes):
             self.shapes[i].translation += state[i][:2] * self.dt
-            self.shapes[i].rotation += state[i][2] * self.dt
+            self.shapes[i].rotation = (self.shapes[i].rotation + state[i][2] * self.dt) % (
+                2 * torch.pi
+            )
             self.shapes[i].velocity = state[i][:2]
             self.shapes[i].angular_velocity = state[i][2]
 

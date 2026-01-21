@@ -15,8 +15,8 @@ class Joint(ABC):
     ):
         self.child_idx: int = child_idx
         self.parent_idx: int = parent_idx  # If -1, parent is static world
-        self.child_anchor = child_anchor
-        self.parent_anchor = parent_anchor
+        self.child_anchor = torch.as_tensor(child_anchor)
+        self.parent_anchor = torch.as_tensor(parent_anchor)
 
     def to(self, device: torch.device):
         self.child_anchor = self.child_anchor.to(device)
@@ -30,10 +30,17 @@ class FixedJoint(Joint):
         parent_idx: int,
         child_anchor: torch.Tensor,
         parent_anchor: torch.Tensor,
-        target_rotation: float,
+        child_target_rotation: float = 0.0,
+        parent_target_rotation: float = 0.0,
     ):
         super().__init__(child_idx, parent_idx, child_anchor, parent_anchor)
-        self.target_rotation = target_rotation
+        self.child_target_rotation = torch.as_tensor(child_target_rotation)
+        self.parent_target_rotation = torch.as_tensor(parent_target_rotation)
+
+    def to(self, device: torch.device):
+        self.child_target_rotation = self.child_target_rotation.to(device)
+        self.parent_target_rotation = self.parent_target_rotation.to(device)
+        super().to(device)
 
 
 class PrismaticJoint(Joint):
@@ -46,7 +53,7 @@ class PrismaticJoint(Joint):
         axis: torch.Tensor = torch.Tensor([1.0, 0.0]),
     ):
         super().__init__(child_idx, parent_idx, child_anchor, parent_anchor)
-        self.axis: torch.Tensor = axis
+        self.axis = torch.as_tensor(axis)
 
     def to(self, device: torch.device):
         self.axis = self.axis.to(device)
@@ -64,7 +71,7 @@ class RevoluteJoint(Joint):
         super().__init__(child_idx, parent_idx, child_anchor, parent_anchor)
 
 
-JOINT_TO_INT = {FixedJoint: -1, PrismaticJoint: 0, RevoluteJoint: 1}
+JOINT_TO_INT = {FixedJoint: 0, RevoluteJoint: 1, PrismaticJoint: 2}
 INT_TO_JOINT = {v: k for k, v in JOINT_TO_INT.items()}
 
 
@@ -144,7 +151,11 @@ def compute_joint_constraints(
                 J2[2] = _perp(r_2).dot(-n)
             constraints.append((J1, J2, diff[i]))
 
-        ang_diff = (theta_1 - theta_2) + joint.target_rotation
+        target_angle_1 = theta_1 + joint.child_target_rotation
+        target_angle_2 = theta_2 + joint.parent_target_rotation
+        ang_diff = target_angle_2 - target_angle_1
+        ang_diff = (ang_diff + torch.pi) % (2 * torch.pi) - torch.pi
+
         J1_a = torch.tensor([0.0, 0.0, 1.0], device=device)
         J2_a = torch.tensor([0.0, 0.0, -1.0], device=device)
         constraints.append((J1_a, J2_a, ang_diff))
