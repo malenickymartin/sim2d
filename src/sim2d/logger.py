@@ -135,6 +135,7 @@ class EngineLogger:
                 self.hdf5_logger.log_data("shape_types", [shape_to_int(s) for s in sim.shapes])
                 self.hdf5_logger.log_data("masses", [s.mass.cpu() for s in sim.shapes])
                 self.hdf5_logger.log_data("restitutions", [s.restitution.cpu() for s in sim.shapes])
+                self.hdf5_logger.log_data("inertias", [s.inertia.cpu() for s in sim.shapes])
                 self.hdf5_logger.log_data("ignored_contacts", sim.ignore_contacts)
                 radii = []
                 for s in sim.shapes:
@@ -154,18 +155,23 @@ class EngineLogger:
                     self.hdf5_logger.log_data("active", False)
 
             with self.hdf5_logger.scope("joints"):
-                joints_target_rotation = []
+                child_target_rotation = []
+                parent_target_rotation = []
                 joints_axis = []
                 for joint in sim.joints:
-                    joints_target_rotation.append(
-                        getattr(joint, "target_rotation", torch.tensor(0.0)).cpu()
+                    child_target_rotation.append(
+                        getattr(joint, "child_target_rotation", torch.tensor(0.0)).cpu()
+                    )
+                    parent_target_rotation.append(
+                        getattr(joint, "parent_target_rotation", torch.tensor(0.0)).cpu()
                     )
                     joints_axis.append(getattr(joint, "axis", torch.tensor([0.0, 0.0])).cpu())
                 self.hdf5_logger.log_data("num_joints", len(sim.joints))
                 self.hdf5_logger.log_data("joint_types", [joint_to_int(j) for j in sim.joints])
                 self.hdf5_logger.log_data("child_idxs", [j.child_idx for j in sim.joints])
                 self.hdf5_logger.log_data("parent_idxs", [j.parent_idx for j in sim.joints])
-                self.hdf5_logger.log_data("target_rotation", joints_target_rotation)
+                self.hdf5_logger.log_data("child_target_rotation", child_target_rotation)
+                self.hdf5_logger.log_data("parent_target_rotation", parent_target_rotation)
                 self.hdf5_logger.log_data("axis", joints_axis)
                 self.hdf5_logger.log_data(
                     "child_anchors", [j.child_anchor.cpu() for j in sim.joints]

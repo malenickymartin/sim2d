@@ -34,6 +34,9 @@ class EulerSolver:
         self.atol = atol
 
         self.masses = torch.tensor([s.mass for s in self.shapes], device=self.device)
+        self.inv_masses = 1 / torch.tensor(
+            [[s.mass, s.mass, s.inertia] for s in self.shapes], device=self.device
+        )
         self.restitutions = torch.tensor([s.restitution for s in self.shapes], device=self.device)
 
         self.num_shapes = len(shapes)
@@ -93,8 +96,8 @@ class EulerSolver:
 
             lambdas = state[body_idxs, 3 + local_idxs]
             force_impulse = -lambdas.unsqueeze(1) * jacobians
-            inv_masses = 1.0 / self.masses[body_idxs].unsqueeze(1)
-            vel_delta = force_impulse * inv_masses
+            inv_M = self.inv_masses[body_idxs]
+            vel_delta = force_impulse * inv_M
             res_vel = res[:, :3].clone()
             res_vel.index_add_(0, body_idxs, vel_delta)
             mask_neigh = neighbor_idxs != -1
@@ -103,8 +106,8 @@ class EulerSolver:
                 force_impulse_neigh = (
                     -lambdas[mask_neigh].unsqueeze(1) * jacobians_neigh[mask_neigh]
                 )
-                inv_masses_neigh = 1.0 / self.masses[neigh_idxs].unsqueeze(1)
-                vel_delta_neigh = force_impulse_neigh * inv_masses_neigh
+                inv_M_neigh = self.inv_masses[neigh_idxs]
+                vel_delta_neigh = force_impulse_neigh * inv_M_neigh
                 res_vel.index_add_(0, neigh_idxs, vel_delta_neigh)
             res[:, :3] = res_vel
 
@@ -153,22 +156,22 @@ class EulerSolver:
             dists = contacts["dist"]
             is_equality = contacts["is_equality"]
 
-            inv_masses = 1.0 / self.masses[body_idxs]
+            inv_M = self.inv_masses[body_idxs]
             lambdas = state[body_idxs, 3 + local_idxs]
             base_rows = body_idxs * n_vars
             col_lambda = base_rows + 3 + local_idxs
             for k in range(3):
-                J[base_rows + k, col_lambda] = -jacobians[:, k] * inv_masses
+                J[base_rows + k, col_lambda] = -jacobians[:, k] * inv_M[:, k]
             mask_neigh = neighbor_idxs != -1
             if mask_neigh.any():
                 neigh_idxs = neighbor_idxs[mask_neigh]
                 jac_neigh_subset = jacobians_neigh[mask_neigh]
-                inv_masses_neigh = 1.0 / self.masses[neigh_idxs]
+                inv_M_neigh = self.inv_masses[neigh_idxs]
                 rows_neigh_vel = neigh_idxs * n_vars
                 cols_lambda_subset = col_lambda[mask_neigh]
                 for k in range(3):
                     J[rows_neigh_vel + k, cols_lambda_subset] = (
-                        -jac_neigh_subset[:, k] * inv_masses_neigh
+                        -jac_neigh_subset[:, k] * inv_M_neigh[:, k]
                     )
             b_error = -(self.beta / self.dt) * dists
             b_restitution = self.restitutions[body_idxs].unsqueeze(1) * state_init[body_idxs, :3]

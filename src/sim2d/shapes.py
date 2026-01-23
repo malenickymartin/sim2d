@@ -12,6 +12,7 @@ class Shape(ABC):
         angular_velocity: torch.Tensor,
         mass: torch.Tensor,
         restitution: torch.Tensor,
+        inertia: torch.Tensor,
     ):
         self.translation = torch.as_tensor(translation)
         self.rotation = torch.as_tensor(rotation)
@@ -19,6 +20,7 @@ class Shape(ABC):
         self.angular_velocity = torch.as_tensor(angular_velocity)
         self.mass = torch.as_tensor(mass)
         self.restitution = torch.as_tensor(restitution)
+        self.inertia = torch.as_tensor(inertia)
 
     def to(self, device: torch.device):
         self.translation = self.translation.to(device)
@@ -27,6 +29,7 @@ class Shape(ABC):
         self.angular_velocity = self.angular_velocity.to(device)
         self.mass = self.mass.to(device)
         self.restitution = self.restitution.to(device)
+        self.inertia = self.inertia.to(device)
 
 
 class Floor(Shape):
@@ -42,6 +45,7 @@ class Floor(Shape):
             torch.tensor(0.0),
             torch.tensor(torch.inf),
             restitution,
+            torch.tensor(torch.inf),
         )
         self.height = torch.as_tensor(height)
 
@@ -62,6 +66,7 @@ class Circle(Shape):
             torch.tensor(0.0),
             mass,
             restitution,
+            mass * radius**2 / 2.0,
         )
         self.radius = torch.as_tensor(radius)
 
@@ -85,6 +90,7 @@ class Point(Circle):
             restitution,
             radius=torch.tensor(0.0),
         )
+        self.inertia = self.mass.clone()
 
 
 class Rectangle(Shape):
@@ -105,6 +111,7 @@ class Rectangle(Shape):
             torch.as_tensor(angular_velocity),
             mass,
             restitution,
+            mass * (sides[0] ** 2 + sides[1] ** 2) / 12.0,
         )
         self.sides = torch.as_tensor(sides)
 
