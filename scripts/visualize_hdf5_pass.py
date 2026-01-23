@@ -5,6 +5,7 @@ import h5py
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+import matplotlib.colors as mcolors
 from matplotlib.widgets import Slider, Button
 import matplotlib.patches as patches
 
@@ -14,12 +15,33 @@ SHAPE_TYPE_CIRCLE = 0
 SHAPE_TYPE_POINT = 1
 SHAPE_TYPE_RECTANGLE = 2
 
+# Joint Types (matches joints.py)
+JOINT_TYPE_FIXED = 0
+JOINT_TYPE_REVOLUTE = 1
+JOINT_TYPE_PRISMATIC = 2
+
 # Controls how quickly arrows fade (Number of frames)
 FADE_FRAMES = 10
 
 # Controls arrow length (LOWER value = LONGER arrows)
 ARROW_SCALE = 2.5
 ROTATION_SCALE = 1.0
+
+
+def darken_color(color, factor=0.5):
+    try:
+        c = mcolors.to_rgb(color)
+        # Scale RGB values and clip to valid range [0, 1]
+        darker = [max(0.0, min(1.0, x * factor)) for x in c]
+        return darker
+    except ValueError:
+        return "black"
+
+
+def rotate_point(point, angle):
+    """Rotates a 2D point (x, y) by a given angle (radians)."""
+    c, s = np.cos(angle), np.sin(angle)
+    return np.array([point[0] * c - point[1] * s, point[0] * s + point[1] * c])
 
 
 def visualize_simulation(filepath: str, save_path: str = None):
@@ -53,6 +75,26 @@ def visualize_simulation(filepath: str, save_path: str = None):
         # Load Floor config
         floor_active = config["floor"]["active"][()]
         floor_height = config["floor"]["height"][()] if floor_active else 0.0
+
+        # --- Load Joints ---
+        has_joints = "joints" in config
+        num_joints = 0
+        joint_types = []
+        child_idxs = []
+        parent_idxs = []
+        child_anchors = []
+        parent_anchors = []
+
+        if has_joints:
+            j_config = config["joints"]
+            num_joints = j_config["num_joints"][()] if "num_joints" in j_config else 0
+            if num_joints > 0:
+                joint_types = j_config["joint_types"][:]
+                child_idxs = j_config["child_idxs"][:]
+                parent_idxs = j_config["parent_idxs"][:]
+                child_anchors = j_config["child_anchors"][:]
+                parent_anchors = j_config["parent_anchors"][:]
+                print(f"Loaded {num_joints} joints.")
 
         # --- Load Steps ---
         step_keys = sorted([k for k in f.keys() if k.startswith("step_")])
@@ -115,7 +157,7 @@ def visualize_simulation(filepath: str, save_path: str = None):
     pad_y = (max_y - min_y) * 0.1 + 0.5
 
     # --- Setup Figure ---
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(10, 8))
     plt.subplots_adjust(bottom=0.25)
 
     x_lo = np.clip(min_x - pad_x, -100, 100) if not np.isnan(min_x - pad_x) else -100
@@ -130,8 +172,9 @@ def visualize_simulation(filepath: str, save_path: str = None):
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
 
-    # --- Initialize Graphics ---
+    # --- Initialize Graphics (Shapes) ---
     graphic_elements = []
+    rotation_lines = []
 
     if floor_active:
         ax.axhline(y=floor_height, color="black", linewidth=2)
@@ -148,22 +191,67 @@ def visualize_simulation(filepath: str, save_path: str = None):
     for i, s_type in enumerate(shape_types):
         pos = translations[0][i]
 
+        # Define Colors per shape type
+        if s_type == SHAPE_TYPE_POINT:
+            base_color = "red"
+            edge_color = "black"
+        elif s_type == SHAPE_TYPE_RECTANGLE:
+            base_color = "orange"
+            edge_color = "darkorange"
+        else:
+            base_color = "cornflowerblue"
+            edge_color = "navy"
+
+        # Create Patch
         if s_type == SHAPE_TYPE_POINT:
             r = 0.05
-            patch = patches.Circle((pos[0], pos[1]), r, fc="red", ec="black", zorder=5)
+            patch = patches.Circle((pos[0], pos[1]), r, fc=base_color, ec=edge_color, zorder=5)
         elif s_type == SHAPE_TYPE_RECTANGLE:
             w, h = sides[i]
             patch = patches.Rectangle(
-                (0, 0), w, h, angle=0.0, fc="orange", ec="darkorange", alpha=0.9, zorder=5
+                (0, 0), w, h, angle=0.0, fc=base_color, ec=edge_color, alpha=0.9, zorder=5
             )
         else:
             r = radii[i]
             patch = patches.Circle(
-                (pos[0], pos[1]), r, fc="cornflowerblue", ec="navy", alpha=0.9, zorder=5
+                (pos[0], pos[1]), r, fc=base_color, ec=edge_color, alpha=0.9, zorder=5
             )
 
         ax.add_patch(patch)
         graphic_elements.append(patch)
+
+        # Create Rotation Line
+        line_color = darken_color(base_color, factor=0.5)
+        (line,) = ax.plot([], [], color=line_color, lw=2.0, zorder=6)
+        rotation_lines.append(line)
+
+    # --- Initialize Graphics (Joints) ---
+    joint_lines = []
+    joint_markers = []
+
+    # Map Joint Type to Color
+    # Fixed: Red, Revolute: Green, Prismatic: Blue
+    JOINT_COLORS = {
+        JOINT_TYPE_FIXED: "blue",
+        JOINT_TYPE_REVOLUTE: "green",
+        JOINT_TYPE_PRISMATIC: "red",
+    }
+
+    if num_joints > 0:
+        for j_idx in range(num_joints):
+            color = JOINT_COLORS.get(joint_types[j_idx], "black")
+
+            # Line from Child Center to Child Anchor
+            (line_c,) = ax.plot([], [], color=color, linestyle="--", lw=1.5, zorder=15)
+            # Line from Parent Center to Parent Anchor
+            (line_p,) = ax.plot([], [], color=color, linestyle=":", lw=1.5, zorder=15)
+
+            # Anchor markers
+            (mark_c,) = ax.plot([], [], marker="o", color=color, markersize=5, zorder=16)
+            (mark_p,) = ax.plot([], [], marker="x", color=color, markersize=6, zorder=16)
+
+            joint_lines.extend([line_c, line_p])
+            joint_markers.extend([mark_c, mark_p])
 
     # --- Torque/Rotation Visualization Markers ---
     scat_ccw = ax.scatter(
@@ -180,6 +268,7 @@ def visualize_simulation(filepath: str, save_path: str = None):
         def __init__(self):
             self.is_playing = False
             self.show_jacobians = True
+            self.show_joints = True
             self.quiver = None
             self.persistent_contacts = {}
 
@@ -190,6 +279,10 @@ def visualize_simulation(filepath: str, save_path: str = None):
         def toggle_jacobians(self, event=None):
             self.show_jacobians = not self.show_jacobians
             btn_jacobian.label.set_text(f"Jacobians: {'ON' if self.show_jacobians else 'OFF'}")
+
+        def toggle_joints(self, event=None):
+            self.show_joints = not self.show_joints
+            btn_joints.label.set_text(f"Joints: {'ON' if self.show_joints else 'OFF'}")
 
     sim_state = SimState()
 
@@ -208,9 +301,11 @@ def visualize_simulation(filepath: str, save_path: str = None):
         current_rots = rotations[idx]
 
         for i, patch in enumerate(graphic_elements):
+            cx, cy = current_trans[i][:2]
+            theta = current_rots[i]
+
+            # Update Patches
             if isinstance(patch, patches.Rectangle):
-                cx, cy = current_trans[i]
-                theta = current_rots[i]
                 w, h = sides[i]
                 dx, dy = -w / 2.0, -h / 2.0
                 cos_t, sin_t = np.cos(theta), np.sin(theta)
@@ -218,10 +313,76 @@ def visualize_simulation(filepath: str, save_path: str = None):
                 rot_y = dx * sin_t + dy * cos_t
                 patch.set_xy((cx + rot_x, cy + rot_y))
                 patch.angle = np.degrees(theta)
+                line_len = w / 2.0
+            elif isinstance(patch, patches.Circle):
+                patch.center = (cx, cy)
+                if shape_types[i] == SHAPE_TYPE_POINT:
+                    line_len = 0.05
+                else:
+                    line_len = radii[i]
             else:
-                patch.center = (current_trans[i][0], current_trans[i][1])
+                patch.center = (cx, cy)
+                line_len = 0.5
 
-        # 2. Update Jacobians (Linear Quiver + Angular Scatter)
+            # Update Rotation Line (darker color set during init)
+            end_x = cx + np.cos(theta) * line_len
+            end_y = cy + np.sin(theta) * line_len
+            rotation_lines[i].set_data([cx, end_x], [cy, end_y])
+
+        # 2. Update Joints
+        if num_joints > 0:
+            if sim_state.show_joints:
+                for j_idx in range(num_joints):
+                    c_idx = child_idxs[j_idx]
+                    p_idx = parent_idxs[j_idx]
+
+                    # Child Calculation
+                    c_pos = current_trans[c_idx][:2]
+                    c_rot = current_rots[c_idx]
+                    c_anchor_local = child_anchors[j_idx]
+                    # Rotate anchor by child's rotation
+                    c_anchor_world = c_pos + rotate_point(c_anchor_local, c_rot)
+
+                    # Parent Calculation
+                    if p_idx == -1:
+                        # Static world parent
+                        p_pos = parent_anchors[
+                            j_idx
+                        ]  # Draw line from anchor to anchor? or just anchor
+                        p_anchor_world = parent_anchors[j_idx]
+                        # For static parent, we visually ground it at the anchor point itself
+                        p_pos = p_anchor_world
+                    else:
+                        p_pos = current_trans[p_idx][:2]
+                        p_rot = current_rots[p_idx]
+                        p_anchor_local = parent_anchors[j_idx]
+                        p_anchor_world = p_pos + rotate_point(p_anchor_local, p_rot)
+
+                    # Update Lines (Body Center -> Anchor)
+                    # Indices in list: [line_c_0, line_p_0, line_c_1, line_p_1, ...]
+                    joint_lines[j_idx * 2].set_data(
+                        [c_pos[0], c_anchor_world[0]], [c_pos[1], c_anchor_world[1]]
+                    )
+                    joint_lines[j_idx * 2 + 1].set_data(
+                        [p_pos[0], p_anchor_world[0]], [p_pos[1], p_anchor_world[1]]
+                    )
+
+                    # Update Markers (Anchors)
+                    joint_markers[j_idx * 2].set_data([c_anchor_world[0]], [c_anchor_world[1]])
+                    joint_markers[j_idx * 2 + 1].set_data([p_anchor_world[0]], [p_anchor_world[1]])
+
+                    # Toggle visibility on
+                    joint_lines[j_idx * 2].set_visible(True)
+                    joint_lines[j_idx * 2 + 1].set_visible(True)
+                    joint_markers[j_idx * 2].set_visible(True)
+                    joint_markers[j_idx * 2 + 1].set_visible(True)
+            else:
+                for line in joint_lines:
+                    line.set_visible(False)
+                for marker in joint_markers:
+                    marker.set_visible(False)
+
+        # 3. Update Jacobians (Linear Quiver + Angular Scatter)
         if sim_state.quiver is not None:
             try:
                 sim_state.quiver.remove()
@@ -337,7 +498,13 @@ def visualize_simulation(filepath: str, save_path: str = None):
 
         time_text.set_text(f"Time: {times[idx]:.2f}s (Frame {idx})")
 
-        ret = graphic_elements + [time_text, scat_ccw, scat_cw]
+        ret = (
+            graphic_elements
+            + rotation_lines
+            + joint_lines
+            + joint_markers
+            + [time_text, scat_ccw, scat_cw]
+        )
         if sim_state.quiver:
             ret.append(sim_state.quiver)
         return ret
@@ -359,10 +526,14 @@ def visualize_simulation(filepath: str, save_path: str = None):
     ax_jac = plt.axes([0.05, 0.04, 0.2, 0.04])
     btn_jacobian = Button(ax_jac, "Jacobians: ON", hovercolor="0.975")
 
+    ax_joint = plt.axes([0.30, 0.04, 0.15, 0.04])
+    btn_joints = Button(ax_joint, "Joints: ON", hovercolor="0.975")
+
     # --- Callbacks ---
     slider.on_changed(lambda val: fig.canvas.draw_idle())
     btn_play.on_clicked(sim_state.toggle_play)
     btn_jacobian.on_clicked(sim_state.toggle_jacobians)
+    btn_joints.on_clicked(sim_state.toggle_joints)
 
     anim = animation.FuncAnimation(
         fig, update, frames=num_steps, interval=20, blit=False, cache_frame_data=False
@@ -376,6 +547,7 @@ def visualize_simulation(filepath: str, save_path: str = None):
         ax_slider.set_visible(False)
         ax_play.set_visible(False)
         ax_jac.set_visible(False)
+        ax_joint.set_visible(False)
         anim.save(save_path, writer=writer, fps=30, dpi=300)
         print("Save complete.")
     else:
@@ -386,6 +558,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Visualize HDF5 Pass")
     parser.add_argument("--hdf_path", type=str, required=True)
     parser.add_argument("--save_path", type=str, default=None)
-    args = parser.parse_args()
     args = parser.parse_args()
     visualize_simulation(args.hdf_path, args.save_path)
