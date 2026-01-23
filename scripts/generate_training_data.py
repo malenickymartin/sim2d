@@ -30,7 +30,9 @@ class SimulatorGenerator(sim2d.Simulator):
         sim_time = warmup_steps * dt
         self.device = torch.device("cpu")
         logging_config = sim2d.LoggingConfig(False, False, False, None)
-        super().__init__(sim_time, newton_iters, gravity, dt, logging_config=logging_config)
+        super().__init__(
+            sim_time, newton_iters, gravity, dt, logging_config=logging_config, device=self.device
+        )
 
     def build_model(self):
         self.floor = sim2d.Floor(np.random.uniform(-1.0, 1.0), np.random.random())

@@ -24,8 +24,13 @@ class Simulator(ABC):
         dt: float = 0.01,
         init_gnn_path: Optional[str | Path] = None,
         logging_config: Optional[LoggingConfig] = None,
+        device: Optional[torch.device] = None,
     ):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = (
+            torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            if device is None
+            else device
+        )
 
         self.num_steps = int(sim_time // dt + sim_time % dt)
         self.newton_iters = newton_iters
