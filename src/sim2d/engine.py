@@ -138,7 +138,7 @@ class EulerSolver:
             res[body_idxs, 3 + local_idxs] = final_vals
         return torch.flatten(res)
 
-    def compute_jacobian(self, state: torch.Tensor, state_init: torch.Tensor, contacts: dict):
+    def compute_jacobian(self, state: torch.Tensor, state_init: torch.Tensor, constraints: dict):
         n_shapes, n_vars = state.shape
         total_vars = n_shapes * n_vars
         J = torch.zeros((total_vars, total_vars), device=self.device)
@@ -147,14 +147,14 @@ class EulerSolver:
             J[rows + k, rows + k] = 1.0
         for k in range(3, n_vars):
             J[rows + k, rows + k] = 1.0
-        if contacts["body_idx"].numel() > 0:
-            body_idxs = contacts["body_idx"]
-            neighbor_idxs = contacts["neighbor_idx"]
-            local_idxs = contacts["local_idx"]
-            jacobians = contacts["jac"]
-            jacobians_neigh = contacts["jac_neigh"]
-            dists = contacts["dist"]
-            is_equality = contacts["is_equality"]
+        if constraints["body_idx"].numel() > 0:
+            body_idxs = constraints["body_idx"]
+            neighbor_idxs = constraints["neighbor_idx"]
+            local_idxs = constraints["local_idx"]
+            jacobians = constraints["jac"]
+            jacobians_neigh = constraints["jac_neigh"]
+            dists = constraints["dist"]
+            is_equality = constraints["is_equality"]
 
             inv_M = self.inv_masses[body_idxs]
             lambdas = state[body_idxs, 3 + local_idxs]
@@ -219,9 +219,9 @@ class EulerSolver:
     def fischer_burmeister(self, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
         return a + b - torch.sqrt(a**2 + b**2 + self.eps)
 
-    def state_shape(self, contacts) -> tuple[int]:
-        if contacts["body_idx"].numel() == 0:
-            max_contacts = 0
+    def state_shape(self, constraints) -> tuple[int]:
+        if constraints["body_idx"].numel() == 0:
+            max_constraints = 0
         else:
-            max_contacts = int(contacts["counts"].max().item())
-        return (self.num_shapes, 3 + max_contacts)
+            max_constraints = int(constraints["counts"].max().item())
+        return (self.num_shapes, 3 + max_constraints)
