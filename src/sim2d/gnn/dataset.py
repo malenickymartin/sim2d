@@ -8,17 +8,31 @@ from tqdm import tqdm
 import h5py
 
 import torch
-from torch_geometric.data import InMemoryDataset, HeteroData, DataLoader
+from torch_geometric.data import InMemoryDataset, HeteroData
 
-NODE_FEATURE_DIMS = {"object": 6, "floor": 1}
+from sim2d.joints import JOINT_NUM_CONSTR
+
+NODE_FEATURE_DIMS = {"object": 7, "floor": 1}
 EDGE_FEATURE_DIMS = {
     ("object", "contact", "object"): 4,
     ("floor", "contact", "object"): 4,
+    ("object", "fixed_joint", "object"): 12,
+    ("object", "revolute_joint", "object"): 8,
+    ("object", "prismatic_joint", "object"): 8,
+    ("floor", "fixed_joint", "object"): 12,
+    ("floor", "revolute_joint", "object"): 8,
+    ("floor", "prismatic_joint", "object"): 8,
 }
 OUTPUT_FEATURE_DIMS = {
     "object": 3,
     ("object", "contact", "object"): 1,
     ("floor", "contact", "object"): 1,
+    ("object", "fixed_joint", "object"): 3,
+    ("object", "revolute_joint", "object"): 2,
+    ("object", "prismatic_joint", "object"): 2,
+    ("floor", "fixed_joint", "object"): 3,
+    ("floor", "revolute_joint", "object"): 2,
+    ("floor", "prismatic_joint", "object"): 2,
 }
 
 
@@ -42,13 +56,13 @@ class DatasetSim2D(InMemoryDataset):
 
     @property
     def processed_file_names(self):
-        return ["data_new_wo_constants.pt", "statistics_wo_constants.pt"]
+        return ["data.pt", "statistics.pt"]
 
     def process(self) -> None:
         passes_paths = []
         passes_steps = []
         raw_path = Path(self.raw_dir)
-        for path in raw_path.iterdir():
+        for path in sorted(raw_path.iterdir(), key=lambda p: int(p.stem.rsplit("_", 1)[1])):
             if path.suffix == ".h5":
                 passes_paths.append(path)
                 with h5py.File(path, "r") as f:
@@ -103,6 +117,8 @@ class DatasetSim2D(InMemoryDataset):
 
         data = HeteroData()
 
+        # --- Nodes ---
+        # -- Objects --
         nodes_object = []
         preds_object = []
         for i in range(config["shapes"]["num_shapes"][()]):
@@ -110,6 +126,7 @@ class DatasetSim2D(InMemoryDataset):
                 [
                     config["shapes"]["restitutions"][i],
                     config["shapes"]["masses"][i],
+                    config["shapes"]["inertias"][i],
                     step["shapes_data"]["velocity"][i][0],
                     step["shapes_data"]["velocity"][i][1],
                     norm(step["shapes_data"]["velocity"][i]),
@@ -126,13 +143,20 @@ class DatasetSim2D(InMemoryDataset):
         data["object"].x = torch.tensor(nodes_object, dtype=torch.float32)
         data["object"].y = torch.tensor(preds_object, dtype=torch.float32)
 
+        # -- Floor --
         if config["floor"]["active"][()]:
             data["floor"].x = torch.tensor(
                 [[config["floor"]["restitution"][()]]], dtype=torch.float32
             )
+        elif (config["joints"]["num_joints"][()] > 0) and (
+            config["joints"]["parent_idxs"][()] == -1
+        ).any():
+            data["floor"].x = torch.tensor([[0.0]], dtype=torch.float32)
         else:
             data["floor"].x = torch.zeros((0, 1), dtype=torch.float32)
 
+        # --- Edges ---
+        # -- Contacts --
         attrs_object_object = []
         attrs_floor_object = []
         indices_object_object = []
@@ -150,51 +174,108 @@ class DatasetSim2D(InMemoryDataset):
                 indices_object_object.append([idx_2, idx_1])
                 indices_object_object.append([idx_1, idx_2])
                 preds_object_object.append(
-                    step_next["contacts_data"]["lambdas"][idx_1][object_lambda_counter[idx_1]]
+                    [step_next["contacts_data"]["lambdas"][idx_1][object_lambda_counter[idx_1]]]
                 )
                 preds_object_object.append(
-                    step_next["contacts_data"]["lambdas"][idx_2][object_lambda_counter[idx_2]]
+                    [step_next["contacts_data"]["lambdas"][idx_1][object_lambda_counter[idx_1]]]
                 )
                 object_lambda_counter[idx_1] += 1
-                object_lambda_counter[idx_2] += 1
             else:
                 attrs_floor_object.append([J_1[0], J_1[1], J_1[2], dist])
                 indices_floor_object.append([0, idx_1])
                 preds_floor_object.append(
-                    step_next["contacts_data"]["lambdas"][idx_1][object_lambda_counter[idx_1]]
+                    [step_next["contacts_data"]["lambdas"][idx_1][object_lambda_counter[idx_1]]]
                 )
                 object_lambda_counter[idx_1] += 1
+        self._assign_edge_data(
+            data,
+            ("object", "contact", "object"),
+            indices_object_object,
+            attrs_object_object,
+            preds_object_object,
+            EDGE_FEATURE_DIMS[("object", "contact", "object")],
+            OUTPUT_FEATURE_DIMS[("object", "contact", "object")],
+        )
+        self._assign_edge_data(
+            data,
+            ("floor", "contact", "object"),
+            indices_floor_object,
+            attrs_floor_object,
+            preds_floor_object,
+            EDGE_FEATURE_DIMS[("floor", "contact", "object")],
+            OUTPUT_FEATURE_DIMS[("floor", "contact", "object")],
+        )
 
-        if len(indices_object_object) > 0:
-            data["object", "contact", "object"].edge_attr = torch.tensor(
-                attrs_object_object, dtype=torch.float32
+        # -- Joints --
+        attrs_object_joint = {0: [], 1: [], 2: []}
+        attrs_floor_joint = {0: [], 1: [], 2: []}
+        indices_object_joint = {0: [], 1: [], 2: []}
+        indices_floor_joint = {0: [], 1: [], 2: []}
+        preds_object_joint = {0: [], 1: [], 2: []}
+        preds_floor_joint = {0: [], 1: [], 2: []}
+        constr_counter = 0
+        for i in range(config["joints"]["num_joints"][()]):
+            joint_type = config["joints"]["joint_types"][i]
+            idx_1, idx_2 = config["joints"]["child_idxs"][i], config["joints"]["parent_idxs"][i]
+            attrs_1, attrs_2, preds_1, preds_2 = [], [], [], []
+            for _ in range(JOINT_NUM_CONSTR[joint_type]):
+                J_1, J_2 = step["joint_data"]["Js"][constr_counter]
+                error = step["joint_data"]["error"][constr_counter]
+                constr_counter += 1
+                attrs_1 += [J_1[0], J_1[1], J_1[2], error]
+                preds_1.append(
+                    step_next["joint_data"]["lambdas"][idx_1][object_lambda_counter[idx_1]]
+                )
+                if idx_2 != -1:
+                    attrs_2 += [J_2[0], J_2[1], J_2[2], error]
+                    preds_2.append(
+                        step_next["joint_data"]["lambdas"][idx_1][object_lambda_counter[idx_1]]
+                    )
+                object_lambda_counter[idx_1] += 1
+            if idx_2 != -1:
+                attrs_object_joint[joint_type].append(attrs_1)
+                attrs_object_joint[joint_type].append(attrs_2)
+                indices_object_joint[joint_type].append([idx_2, idx_1])
+                indices_object_joint[joint_type].append([idx_1, idx_2])
+                preds_object_joint[joint_type].append(preds_1)
+                preds_object_joint[joint_type].append(preds_2)
+            else:
+                attrs_floor_joint[joint_type].append(attrs_1)
+                indices_floor_joint[joint_type].append([0, idx_1])
+                preds_floor_joint[joint_type].append(preds_1)
+
+        JOINT_TYPES = ("fixed_joint", "revolute_joint", "prismatic_joint")
+        for i, joint_type in enumerate(JOINT_TYPES):
+            self._assign_edge_data(
+                data,
+                ("object", joint_type, "object"),
+                indices_object_joint[i],
+                attrs_object_joint[i],
+                preds_object_joint[i],
+                EDGE_FEATURE_DIMS[("object", joint_type, "object")],
+                OUTPUT_FEATURE_DIMS[("object", joint_type, "object")],
             )
-            data["object", "contact", "object"].edge_index = torch.tensor(
-                indices_object_object, dtype=torch.long
-            ).T
-            data["object", "contact", "object"].y = torch.tensor(
-                preds_object_object, dtype=torch.float32
+            self._assign_edge_data(
+                data,
+                ("floor", joint_type, "object"),
+                indices_floor_joint[i],
+                attrs_floor_joint[i],
+                preds_floor_joint[i],
+                EDGE_FEATURE_DIMS[("floor", joint_type, "object")],
+                OUTPUT_FEATURE_DIMS[("floor", joint_type, "object")],
             )
-        else:
-            data["object", "contact", "object"].edge_attr = torch.zeros((0, 4), dtype=torch.float32)
-            data["object", "contact", "object"].edge_index = torch.zeros((2, 0), dtype=torch.long)
-            data["object", "contact", "object"].y = torch.zeros((0), dtype=torch.float32)
-        if len(indices_floor_object) > 0:
-            data["floor", "contact", "object"].edge_attr = torch.tensor(
-                attrs_floor_object, dtype=torch.float32
-            )
-            data["floor", "contact", "object"].edge_index = torch.tensor(
-                indices_floor_object, dtype=torch.long
-            ).T
-            data["floor", "contact", "object"].y = torch.tensor(
-                preds_floor_object, dtype=torch.float32
-            )
-        else:
-            data["floor", "contact", "object"].edge_attr = torch.zeros((0, 4), dtype=torch.float32)
-            data["floor", "contact", "object"].edge_index = torch.zeros((2, 0), dtype=torch.long)
-            data["floor", "contact", "object"].y = torch.zeros((0), dtype=torch.float32)
 
         return data
+
+    def _assign_edge_data(self, data, edge_type, indices, attrs, preds, attr_dim, pred_dim):
+        if len(indices) > 0:
+            data[edge_type].edge_index = torch.tensor(indices, dtype=torch.long).T
+            data[edge_type].edge_attr = torch.tensor(attrs, dtype=torch.float32)
+            data[edge_type].y = torch.tensor(preds, dtype=torch.float32)
+        else:
+            data[edge_type].edge_index = torch.zeros((2, 0), dtype=torch.long)
+            data[edge_type].edge_attr = torch.zeros((0, attr_dim), dtype=torch.float32)
+            data[edge_type].y = torch.zeros((0, pred_dim), dtype=torch.float32)
 
 
 if __name__ == "__main__":

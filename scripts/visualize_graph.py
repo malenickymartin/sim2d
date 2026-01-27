@@ -39,6 +39,11 @@ def visualize_hetero_graph(file_path, idx):
     CONTACT_OBJ_OBJ = "#FF0000"
     CONTACT_FLOOR_OBJ = "#FC802E"
 
+    # Colors for Joint types
+    JOINT_FIXED = "#8A2BE2"  # BlueViolet
+    JOINT_REVOLUTE = "#FFD700"  # Gold
+    JOINT_PRISMATIC = "#20B2AA"  # LightSeaGreen
+
     edge_color_map = {
         "w2o": "#006EFF",
         "w2f": "#32532E",
@@ -129,6 +134,22 @@ def visualize_hetero_graph(file_path, idx):
             else:
                 group_name = "contact_object"
                 color = CONTACT_OBJ_OBJ
+
+        elif "joint" in relation:
+            # Handle Joint Types
+            if "fixed" in relation:
+                group_name = "fixed_joint"
+                color = JOINT_FIXED
+            elif "revolute" in relation:
+                group_name = "revolute_joint"
+                color = JOINT_REVOLUTE
+            elif "prismatic" in relation:
+                group_name = "prismatic_joint"
+                color = JOINT_PRISMATIC
+            else:
+                group_name = relation
+                color = default_edge_color
+
         else:
             group_name = relation
             color = edge_color_map.get(relation, default_edge_color)

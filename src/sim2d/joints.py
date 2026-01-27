@@ -73,6 +73,7 @@ class RevoluteJoint(Joint):
 
 JOINT_TO_INT = {FixedJoint: 0, RevoluteJoint: 1, PrismaticJoint: 2}
 INT_TO_JOINT = {v: k for k, v in JOINT_TO_INT.items()}
+JOINT_NUM_CONSTR = {0: 3, 1: 2, 2: 2}
 
 
 def joint_to_int(joint):

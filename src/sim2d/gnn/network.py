@@ -37,7 +37,9 @@ class MLP(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, hidden_dims: int, hidden_layers: int, normalize: bool, stats: Dict[str, Any] = None):
+    def __init__(
+        self, hidden_dims: int, hidden_layers: int, normalize: bool, stats: Dict[str, Any] = None
+    ):
         super().__init__()
         self.mlp_nodes = nn.ModuleDict(
             {
@@ -53,12 +55,12 @@ class Encoder(nn.Module):
                 for edge_type, edge_dim in EDGE_FEATURE_DIMS.items()
             }
         )
-        
+
         if stats is not None:
             for node_type, s in stats["nodes"].items():
                 self.register_buffer(f"mean_node_{node_type}", s["mean"])
                 self.register_buffer(f"std_node_{node_type}", s["std"])
-            
+
             for edge_key, s in stats["edges"].items():
                 self.register_buffer(f"mean_edge_{edge_key}", s["mean"])
                 self.register_buffer(f"std_edge_{edge_key}", s["std"])
@@ -71,7 +73,7 @@ class Encoder(nn.Module):
                 std = getattr(self, f"std_node_{node_type}")
                 x = (x - mean) / std
             x_dict_encoded[node_type] = self.mlp_nodes[node_type](x)
-            
+
         edge_attr_dict_encoded = {}
         for edge_type, edge_attr in edge_attr_dict.items():
             edge_key = "_".join(edge_type)
@@ -80,7 +82,7 @@ class Encoder(nn.Module):
                 std = getattr(self, f"std_edge_{edge_key}")
                 edge_attr = (edge_attr - mean) / std
             edge_attr_dict_encoded[edge_type] = self.mlp_edges[edge_key](edge_attr)
-            
+
         return x_dict_encoded, edge_attr_dict_encoded
 
 
@@ -94,33 +96,28 @@ class Decoder(nn.Module):
             hidden_layers,
             False,
         )
-        self.mlp_f2o = MLP(
-            hidden_dims,
-            OUTPUT_FEATURE_DIMS[("floor", "contact", "object")],
-            hidden_dims,
-            hidden_layers,
-            False,
-        )
-        self.mlp_o2o = MLP(
-            hidden_dims,
-            OUTPUT_FEATURE_DIMS[("object", "contact", "object")],
-            hidden_dims,
-            hidden_layers,
-            False,
-        )
+
+        self.mlp_edges = nn.ModuleDict()
+        for key, out_dim in OUTPUT_FEATURE_DIMS.items():
+            if type(key) != tuple:
+                continue
+            edge_key = "_".join(key)
+            self.mlp_edges[edge_key] = MLP(
+                hidden_dims,
+                out_dim,
+                hidden_dims,
+                hidden_layers,
+                False,
+            )
 
     def forward(self, x_dict: Dict[str, torch.Tensor], edge_attr_dict: Dict[Tuple, torch.Tensor]):
         objects_decoded = self.mlp_objects(x_dict["object"])
-        contacts_decoded = {}
-        if ("object", "contact", "object") in edge_attr_dict:
-            contacts_decoded[("object", "contact", "object")] = self.mlp_o2o(
-                edge_attr_dict[("object", "contact", "object")]
-            )
-        if ("floor", "contact", "object") in edge_attr_dict:
-            contacts_decoded[("floor", "contact", "object")] = self.mlp_o2o(
-                edge_attr_dict[("floor", "contact", "object")]
-            )
-        return objects_decoded, contacts_decoded
+        lambdas_decoded = {}
+        for edge_type, edge_attr in edge_attr_dict.items():
+            edge_key = "_".join(edge_type)
+            if edge_key in self.mlp_edges:
+                lambdas_decoded[edge_type] = self.mlp_edges[edge_key](edge_attr)
+        return objects_decoded, lambdas_decoded
 
 
 class InteractionNetwork(MessagePassing):
@@ -192,7 +189,14 @@ class Processor(nn.Module):
 
 
 class GNNSim2D(nn.Module):
-    def __init__(self, message_passes: int, hidden_dims: int, hidden_layers: int, normalize: bool, stats: Dict[str, Any] = None):
+    def __init__(
+        self,
+        message_passes: int,
+        hidden_dims: int,
+        hidden_layers: int,
+        normalize: bool,
+        stats: Dict[str, Any] = None,
+    ):
         super().__init__()
         self.encoder = Encoder(hidden_dims, hidden_layers, normalize, stats=stats)
         self.processor = Processor(message_passes, hidden_dims, hidden_layers, normalize)
