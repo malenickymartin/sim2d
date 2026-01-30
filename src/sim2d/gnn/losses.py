@@ -1,27 +1,29 @@
 import torch
 import torch.nn.functional as F
 from .dataset import EDGE_FEATURE_DIMS, OUTPUT_FEATURE_DIMS
+from sim2d.engine import EulerSolver
 
 
 class GNNLoss(torch.nn.Module):
     def __init__(
         self,
         loss_name,
+        device: torch.device,
         gravity=torch.tensor([0.0, -9.81, 0.0]),
         dt=torch.tensor(0.01),
         eps=1e-6,
         beta=0.05,
     ):
         super().__init__()
-        self.gravity = gravity
-        self.dt = dt
+        self.device = device
         if loss_name == "l1_loss":
             self.loss = self.l1_loss
         elif loss_name == "weighted_l1_loss":
             self.loss = self.weighted_l1_loss
         elif loss_name == "residue_loss":
-            self.eps = eps
-            self.beta = beta
+            self.dummy_solver = EulerSolver(
+                [], None, gravity, dt, None, None, self.device, None, beta, eps
+            )
             self.loss = self.residue_loss
         else:
             raise NotImplementedError(f"{loss_name} loss type not found")
@@ -47,7 +49,7 @@ class GNNLoss(torch.nn.Module):
         for edge_type in OUTPUT_FEATURE_DIMS.keys():
             if not isinstance(edge_type, tuple):
                 continue
-            if edge_type in data.edge_types and edge_type in lambdas_dict:
+            if edge_type in data.edge_types and data[edge_type].shape[1] > 0:
                 gt_edge = data[edge_type].y.flatten()
                 pred_edge = lambdas_dict[edge_type].flatten()
                 gt_values = torch.cat([gt_values, gt_edge])
@@ -60,72 +62,62 @@ class GNNLoss(torch.nn.Module):
         return F.l1_loss(pred_values, gt_values, weight=weight)
 
     def residue_loss(self, data, object_states, lambdas_dict) -> torch.Tensor:
-        device = data["object"].x.device
-        num_shapes = data["object"].x.shape[0]
-        dt = torch.ones((num_shapes, 1), dtype=data["object"].x.dtype, device=device) * self.dt
-        gravity = self.gravity.repeat(num_shapes, 1).to(device)
-
-        restitutions = data["object"].x[:, 0].unsqueeze(1)
-        masses = data["object"].x[:, 1]
-        inertias = data["object"].x[:, 2]
-        inv_masses = 1 / torch.stack([masses, masses, inertias], dim=1)
-        v_init = data["object"].x[:, [3, 4, 6]]
-        v_pred = object_states
-        res_v = v_pred - v_init - gravity * dt
-
-        total_vel_delta = torch.zeros_like(res_v)
-        res_c_list = []
-        for edge_type, num_constraints in OUTPUT_FEATURE_DIMS.items():
-            if not isinstance(edge_type, tuple):
+        device = self.device
+        self.dummy_solver.restitutions = data["object"].x[:, 0]
+        self.dummy_solver.inv_masses = 1 / data["object"].x[:, [1, 1, 2]]
+        state_init = data["object"].x[:, [3, 4, 6]]
+        counts = torch.zeros(data["object"].num_nodes, dtype=torch.long, device=device)
+        cons = {
+            "body": [],
+            "neigh": [],
+            "local": [],
+            "dist": [],
+            "J": [],
+            "Jn": [],
+            "eq": [],
+            "l_vals": [],
+        }
+        for (src, name, dst), edges in data.edge_items():
+            if edges.num_edges == 0 or (src, name, dst) not in lambdas_dict:
                 continue
-            if edge_type not in data.edge_types or edge_type not in lambdas_dict:
-                continue
-
-            edge_index = data[edge_type].edge_index
-            edge_attr = data[edge_type].edge_attr
-            target_indices = edge_index[1]
-            lambdas_all = lambdas_dict[edge_type]
-            is_contact = "contact" in edge_type[1]
-            is_equality = not is_contact
-
-            target_indices = edge_index[1]
-            target_inv_masses = inv_masses[target_indices]
-            target_dt = dt[target_indices]
-            target_v_pred = v_pred[target_indices]
-
-            for k in range(num_constraints):
-                jacobians = edge_attr[:, k * 4 : k * 4 + 3]
-                dists = edge_attr[:, k * 4 + 3].unsqueeze(1)
-                if num_constraints == 1:
-                    lambdas = lambdas_all
-                else:
-                    lambdas = lambdas_all[:, k].unsqueeze(1)
-                force_impulse = -lambdas * jacobians
-                vel_delta = force_impulse * target_inv_masses
-                total_vel_delta.index_add_(0, target_indices, vel_delta)
-                if is_equality:
-                    v_term = target_v_pred
-                else:
-                    target_v_init = v_init[target_indices]
-                    target_restitution = restitutions[target_indices]
-                    b_rest_val = target_restitution * target_v_init
-                    v_term = target_v_pred + b_rest_val
-                b_scaled = (jacobians * v_term).sum(dim=1, keepdim=True)
-                b_error = -(self.beta / target_dt) * dists
-                a = b_scaled + b_error
-                if is_equality:
-                    res_c_list.append(a)
-                else:
-                    b = lambdas
-                    fb = a + b - torch.sqrt(a**2 + b**2 + self.eps)
-                    res_c_list.append(fb)
-
-        res_v = res_v + total_vel_delta
-        res_v_flat = res_v.flatten()
-        if res_c_list:
-            res_c_flat = torch.cat(res_c_list).flatten()
-            total_res = torch.cat([res_v_flat, res_c_flat])
-        else:
-            total_res = res_v_flat
-
-        return torch.norm(total_res)
+            is_obj_obj = src == "object" and dst == "object"
+            step = 2 if is_obj_obj else 1
+            idx = torch.arange(0, edges.num_edges, step, device=device)
+            bodies = edges.edge_index[1, idx]
+            neighs = edges.edge_index[0, idx] if is_obj_obj else torch.full_like(bodies, -1)
+            J_body = edges.edge_attr[idx, :3]
+            J_neigh = edges.edge_attr[idx + 1, :3] if is_obj_obj else torch.zeros_like(J_body)
+            dists = edges.edge_attr[idx, 3]
+            preds = lambdas_dict[(src, name, dst)].view(-1)[idx]
+            for i, b_idx in enumerate(bodies):
+                b = b_idx.item()
+                cons["body"].append(b)
+                cons["neigh"].append(neighs[i].item())
+                cons["local"].append(counts[b].item())
+                cons["dist"].append(dists[i])
+                cons["J"].append(J_body[i])
+                cons["Jn"].append(J_neigh[i])
+                cons["eq"].append("joint" in name)
+                cons["l_vals"].append((b, counts[b].item(), preds[i]))
+                counts[b] += 1
+        if not cons["body"]:
+            return torch.tensor(0.0, device=device, requires_grad=True)
+        constraints = {
+            "body_idx": torch.tensor(cons["body"], device=device),
+            "neighbor_idx": torch.tensor(cons["neigh"], device=device),
+            "local_idx": torch.tensor(cons["local"], device=device),
+            "dist": torch.stack(cons["dist"]),
+            "jac": torch.stack(cons["J"]),
+            "jac_neigh": torch.stack(cons["Jn"]),
+            "is_equality": torch.tensor(cons["eq"], device=device),
+            "counts": counts,
+        }
+        state = torch.zeros((len(counts), 3 + int(counts.max().item())), device=device)
+        state[:, :3] = object_states
+        if cons["l_vals"]:
+            b, l, v = zip(*cons["l_vals"])
+            state[torch.tensor(b, device=device), 3 + torch.tensor(l, device=device)] = torch.stack(
+                v
+            )
+        res = self.dummy_solver.resudial_fn(state, state_init, constraints)
+        return torch.norm(res)

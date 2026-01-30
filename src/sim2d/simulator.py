@@ -6,13 +6,20 @@ from tqdm import tqdm
 from abc import ABC
 from abc import abstractmethod
 from typing import Optional
+from collections import defaultdict
 
 from .engine import EulerSolver
 from .collisions import compute_collision
 from .shapes import Floor
 from .shapes import Shape
 from .logger import EngineLogger, LoggingConfig
-from .joints import Joint, compute_joint_constraints
+from .joints import Joint
+from .joints import compute_joint_constraints
+from .joints import JOINT_NUM_CONSTR
+from .joints import JOINT_INT_TO_STR
+from .joints import joint_to_int
+from .gnn.dataset import NODE_FEATURE_DIMS
+from .gnn.dataset import EDGE_FEATURE_DIMS
 
 
 class Simulator(ABC):
@@ -228,16 +235,17 @@ class Simulator(ABC):
         }
         return merged
 
-    def update_gnn_data(self, state: torch.Tensor, contacts: torch.Tensor):
+    def update_gnn_data(self, state: torch.Tensor, constraints: torch.Tensor):
         gnn_data = HeteroData()
         gnn_data["object"].x = torch.zeros(
-            (self.num_shapes, 6), dtype=torch.float32, device=self.device
+            (self.num_shapes, NODE_FEATURE_DIMS["object"]), dtype=torch.float32, device=self.device
         )
         for i in range(self.num_shapes):
             gnn_data["object"].x[i][:] = torch.tensor(
                 [
                     self.shapes[i].restitution,
                     self.shapes[i].mass,
+                    self.shapes[i].inertia,
                     state[i][0],
                     state[i][1],
                     torch.norm(state[i][:2]),
@@ -253,64 +261,163 @@ class Simulator(ABC):
         else:
             gnn_data["floor"].x = torch.zeros((0, 1), dtype=torch.float32, device=self.device)
 
-        all_edge_attrs = torch.cat([contacts["jac"], contacts["dist"].unsqueeze(1)], dim=1)
-        mask_floor = contacts["neighbor_idx"] == -1
-        mask_obj = ~mask_floor
+        mask_eq = constraints["is_equality"]
 
-        if mask_floor.any():
-            target_nodes = contacts["body_idx"][mask_floor]
-            source_nodes = torch.zeros_like(target_nodes)
+        # Contacts
+        mask_contacts = ~mask_eq
+        if mask_contacts.any():
+            c_body = constraints["body_idx"][mask_contacts]
+            c_neigh = constraints["neighbor_idx"][mask_contacts]
+            c_attr = torch.cat(
+                [
+                    constraints["jac"][mask_contacts],
+                    constraints["dist"][mask_contacts].unsqueeze(1),
+                ],
+                dim=1,
+            )
+            c_attr_neigh = torch.cat(
+                [
+                    constraints["jac_neigh"][mask_contacts],
+                    constraints["dist"][mask_contacts].unsqueeze(1),
+                ],
+                dim=1,
+            )
+            mask_floor = c_neigh == -1
+            if mask_floor.any():
+                gnn_data["floor", "contact", "object"].edge_index = torch.stack(
+                    [torch.zeros_like(c_body[mask_floor]), c_body[mask_floor]], dim=0
+                )
+                gnn_data["floor", "contact", "object"].edge_attr = c_attr[mask_floor]
+            mask_obj = c_neigh != -1
+            if mask_obj.any():
+                src, dst = c_neigh[mask_obj], c_body[mask_obj]
+                gnn_data["object", "contact", "object"].edge_index = torch.cat(
+                    [torch.stack([src, dst], dim=0), torch.stack([dst, src], dim=0)], dim=1
+                )
+                gnn_data["object", "contact", "object"].edge_attr = torch.cat(
+                    [c_attr[mask_obj], c_attr_neigh[mask_obj]], dim=0
+                )
 
-            gnn_data["floor", "contact", "object"].edge_index = torch.stack(
-                [source_nodes, target_nodes], dim=0
-            )
-            gnn_data["floor", "contact", "object"].edge_attr = all_edge_attrs[mask_floor]
-        else:
-            gnn_data["floor", "contact", "object"].edge_attr = torch.zeros(
-                (0, 4), dtype=torch.float32, device=self.device
-            )
-            gnn_data["floor", "contact", "object"].edge_index = torch.zeros(
-                (2, 0), dtype=torch.long, device=self.device
-            )
+        # Joints
+        if mask_eq.any():
+            j_jac = constraints["jac"][mask_eq]
+            j_jac_n = constraints["jac_neigh"][mask_eq]
+            j_dist = constraints["dist"][mask_eq]
 
-        if mask_obj.any():
-            target_nodes = contacts["body_idx"][mask_obj]
-            source_nodes = contacts["neighbor_idx"][mask_obj]
+            curr = 0
+            joint_edges = defaultdict(list)
+            for joint in self.joints:
+                n_c = JOINT_NUM_CONSTR[joint_to_int(joint)]
+                j_name = JOINT_INT_TO_STR[joint_to_int(joint)]
+                attr_1 = torch.cat(
+                    [
+                        torch.cat([j_jac[curr + k], j_dist[curr + k : curr + k + 1]])
+                        for k in range(n_c)
+                    ]
+                )
+                if joint.parent_idx == -1:
+                    joint_edges[(j_name, "floor")].append((0, joint.child_idx, attr_1))
+                else:
+                    attr_2 = torch.cat(
+                        [
+                            torch.cat([j_jac_n[curr + k], j_dist[curr + k : curr + k + 1]])
+                            for k in range(n_c)
+                        ]
+                    )
+                    joint_edges[(j_name, "object")].append(
+                        (joint.parent_idx, joint.child_idx, attr_1)
+                    )
+                    joint_edges[(j_name, "object")].append(
+                        (joint.child_idx, joint.parent_idx, attr_2)
+                    )
+                curr += n_c
 
-            gnn_data["object", "contact", "object"].edge_index = torch.stack(
-                [source_nodes, target_nodes], dim=0
-            )
-            gnn_data["object", "contact", "object"].edge_attr = all_edge_attrs[mask_obj]
-        else:
-            gnn_data["object", "contact", "object"].edge_attr = torch.zeros(
-                (0, 4), dtype=torch.float32, device=self.device
-            )
-            gnn_data["object", "contact", "object"].edge_index = torch.zeros(
-                (2, 0), dtype=torch.long, device=self.device
-            )
+            for (j_name, src_type), edges in joint_edges.items():
+                srcs, dsts, attrs = zip(*edges)
+                edge_type = (src_type, j_name, "object")
+                gnn_data[edge_type].edge_index = torch.tensor(
+                    [srcs, dsts], dtype=torch.long, device=self.device
+                )
+                gnn_data[edge_type].edge_attr = torch.stack(attrs)
 
+        self._ensure_empty_edges(gnn_data)
         return gnn_data
 
-    def state_from_gnn(self, gnn_output: tuple, contacts: list) -> torch.Tensor:
-        object_states, lambdas_dict = gnn_output
-        state_guess = torch.zeros(self.solver.state_shape(contacts), device=self.device)
-        state_guess[:, :3] = object_states
-        lambdas_obj = lambdas_dict[("object", "contact", "object")].view(-1)
-        lambdas_floor = lambdas_dict[("floor", "contact", "object")].view(-1)
-        if contacts["body_idx"].numel() > 0:
-            mask_floor = contacts["neighbor_idx"] == -1
-            mask_obj = ~mask_floor
-            if mask_floor.any():
-                body_idxs = contacts["body_idx"][mask_floor]
-                local_idxs = contacts["local_idx"][mask_floor]
-                n_floor = body_idxs.shape[0]
-                state_guess[body_idxs, 3 + local_idxs] = lambdas_floor[:n_floor]
-            if mask_obj.any():
-                body_idxs = contacts["body_idx"][mask_obj]
-                local_idxs = contacts["local_idx"][mask_obj]
-                n_obj = body_idxs.shape[0]
-                state_guess[body_idxs, 3 + local_idxs] = lambdas_obj[:n_obj]
+    def _ensure_empty_edges(self, data):
+        for edge_type_key in EDGE_FEATURE_DIMS.keys():
+            if edge_type_key not in data.edge_types:
+                data[edge_type_key].edge_index = torch.zeros(
+                    (2, 0), dtype=torch.long, device=self.device
+                )
+                data[edge_type_key].edge_attr = torch.zeros(
+                    (0, EDGE_FEATURE_DIMS[edge_type_key]), dtype=torch.float32, device=self.device
+                )
 
+    def state_from_gnn(self, gnn_output: tuple, constraints: dict) -> torch.Tensor:
+        object_states, lambdas_dict = gnn_output
+        state_guess = torch.zeros(self.solver.state_shape(constraints), device=self.device)
+        state_guess[:, :3] = object_states
+
+        mask_eq = constraints["is_equality"]
+        mask_contacts = ~mask_eq
+
+        c_body = constraints["body_idx"][mask_contacts]
+        c_neigh = constraints["neighbor_idx"][mask_contacts]
+        c_local = constraints["local_idx"][mask_contacts]
+
+        mask_floor = c_neigh == -1
+        mask_obj = ~mask_floor
+        if mask_floor.any():
+            body_idxs = c_body[mask_floor]
+            local_idxs = c_local[mask_floor]
+            pred_lambdas = lambdas_dict.get(("floor", "contact", "object"), torch.empty(0))
+            if pred_lambdas.numel() > 0:
+                n_floor = body_idxs.shape[0]
+                state_guess[body_idxs, 3 + local_idxs] = pred_lambdas.view(-1)[:n_floor]
+        if mask_obj.any():
+            body_idxs = c_body[mask_obj]
+            local_idxs = c_local[mask_obj]
+
+            pred_lambdas = lambdas_dict.get(("object", "contact", "object"), torch.empty(0))
+            if pred_lambdas.numel() > 0:
+                n_obj = body_idxs.shape[0]
+                state_guess[body_idxs, 3 + local_idxs] = pred_lambdas.view(-1)[:n_obj]
+
+        joint_output_counters = defaultdict(int)
+
+        j_body_all = constraints["body_idx"][mask_eq]
+        j_local_all = constraints["local_idx"][mask_eq]
+
+        joint_constraint_offset = 0
+        for joint in self.joints:
+            j_type_int = joint_to_int(joint)
+            j_name = JOINT_INT_TO_STR[j_type_int]
+            num_rows = JOINT_NUM_CONSTR[j_type_int]
+
+            body_idx_for_joint = j_body_all[
+                joint_constraint_offset : joint_constraint_offset + num_rows
+            ]
+            local_idxs_for_joint = j_local_all[
+                joint_constraint_offset : joint_constraint_offset + num_rows
+            ]
+            body_idx = body_idx_for_joint[0]
+
+            edge_key = (
+                ("object", j_name, "object")
+                if joint.parent_idx != -1
+                else ("floor", j_name, "object")
+            )
+            if edge_key in lambdas_dict:
+                preds = lambdas_dict[edge_key]
+                idx = joint_output_counters[edge_key]
+                if idx < preds.shape[0]:
+                    val = preds[idx]
+                    state_guess[body_idx, 3 + local_idxs_for_joint] = val
+                    if joint.parent_idx != -1:
+                        joint_output_counters[edge_key] += 2
+                    else:
+                        joint_output_counters[edge_key] += 1
+            joint_constraint_offset += num_rows
         return state_guess
 
     def init_state_fn(self, state: torch.Tensor, constraints: torch.Tensor, dt: float):
@@ -333,6 +440,7 @@ class Simulator(ABC):
     @abstractmethod
     def build_model(self):
         """
-        Fill the self.shapes list with instances of classes from src.shapes and set self.floor
+        Fill the self.shapes list with instances of classes from src.shapes, fill the self.joints
+        list with instances of classes from src.joints, and set self.floor
         """
         pass
