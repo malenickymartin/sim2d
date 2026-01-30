@@ -103,7 +103,7 @@ def train(
 
 
 def main(config):
-    loss_fn = GNNLoss(config["loss_type"])
+    loss_fn = GNNLoss(config["loss_type"], config["device"])
     train_dataset = DatasetSim2D(root=config["dataset_root"] / "train_dataset")
     val_dataset = DatasetSim2D(root=config["dataset_root"] / "val_dataset")
     model = GNNSim2D(
