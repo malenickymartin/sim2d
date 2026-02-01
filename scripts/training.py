@@ -1,5 +1,6 @@
 import argparse
 from pathlib import Path
+from collections import defaultdict
 
 import torch
 from torch_geometric.data import HeteroData
@@ -21,18 +22,21 @@ def train_epoch(
     total_epochs: int,
 ):
     model.train()
-    total_loss = 0
+    total_losses = defaultdict(float)
+    loss_counts = defaultdict(int)
     pbar = tqdm(loader, desc=f"Epoch {epoch+1}/{total_epochs}")
     for i, data in enumerate(pbar, 1):
         data: HeteroData = data.to(device)
         optimizer.zero_grad()
         states, lambdas = model(data.x_dict, data.edge_index_dict, data.edge_attr_dict)
-        loss = loss_fn(data, states, lambdas)
-        loss.backward()
+        loss_dict = loss_fn(data, states, lambdas)
+        loss_dict["total_loss"][0].backward()
         optimizer.step()
-        total_loss += loss.item()
-        pbar.set_postfix({"loss": f"{total_loss/i:.4f}"})
-    return total_loss / len(loader)
+        for k, v in loss_dict.items():
+            total_losses[k] += v[0].item() * v[1]
+            loss_counts[k] += v[1]
+        pbar.set_postfix({"loss": f"{total_losses['total_loss']/loss_counts['total_loss']:.4f}"})
+    return {k: v / loss_counts[k] for k, v in total_losses.items()}
 
 
 def validate_epoch(
@@ -44,16 +48,21 @@ def validate_epoch(
     total_epochs: int,
 ):
     model.eval()
-    total_loss = 0
+    total_losses = defaultdict(float)
+    loss_counts = defaultdict(int)
     pbar = tqdm(loader, desc=f"Epoch {epoch+1}/{total_epochs}")
     with torch.no_grad():
         for i, data in enumerate(pbar, 1):
             data: HeteroData = data.to(device)
             states, lambdas = model(data.x_dict, data.edge_index_dict, data.edge_attr_dict)
-            loss = loss_fn(data, states, lambdas)
-            total_loss += loss.item()
-            pbar.set_postfix({"loss": f"{total_loss/i:.4f}"})
-    return total_loss / len(loader)
+            loss_dict = loss_fn(data, states, lambdas)
+            for k, v in loss_dict.items():
+                total_losses[k] += v[0].item() * v[1]
+                loss_counts[k] += v[1]
+            pbar.set_postfix(
+                {"loss": f"{total_losses['total_loss']/loss_counts['total_loss']:.4f}"}
+            )
+    return {k: v / loss_counts[k] for k, v in total_losses.items()}
 
 
 def train(
@@ -84,21 +93,25 @@ def train(
             epoch,
             config["epochs"],
         )
-        print(f"Epoch {epoch+1} Complete. Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
+        print(
+            f"Epoch {epoch+1} Complete. "
+            f"Train Loss: {train_loss['total_loss']:.6f}, "
+            f"Val Loss: {val_loss['total_loss']:.6f}"
+        )
         wandb.log(
             {
-                "train_loss": train_loss,
-                "val_loss": val_loss,
+                **{f"train/{k}": v for k, v in train_loss.items()},
+                **{f"val/{k}": v for k, v in val_loss.items()},
                 "learning_rate": scheduler.get_last_lr()[0],
             }
         )
         wandb.save(str(config["dataset_root"]))
         if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-            scheduler.step(val_loss)
+            scheduler.step(val_loss["total_loss"])
         else:
             scheduler.step()
-        if val_loss < min_val_loss:
-            min_val_loss = val_loss
+        if val_loss["total_loss"] < min_val_loss:
+            min_val_loss = val_loss["total_loss"]
             torch.save(model, config["dataset_root"] / "models" / config["model_name"])
 
 
@@ -151,7 +164,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=100)
 
     parser.add_argument("--device", type=str, default=None)
-    parser.add_argument("--dataset_root", type=Path, default=Path("data/gnn_datasets/"))
+    parser.add_argument("--dataset_root", type=Path, default=Path("data/test_dataset/"))
     parser.add_argument("--model_name", type=str, default="model.pt")
     parser.add_argument("--wandb", action="store_true", dest="wandb")
     parser.set_defaults(wandb=False)

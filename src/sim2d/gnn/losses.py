@@ -1,3 +1,4 @@
+from typing import Dict
 import torch
 import torch.nn.functional as F
 from .dataset import EDGE_FEATURE_DIMS, OUTPUT_FEATURE_DIMS
@@ -31,7 +32,7 @@ class GNNLoss(torch.nn.Module):
     def forward(self, data, object_states, lambdas_dict):
         return self.loss(data, object_states, lambdas_dict)
 
-    def l1_loss(self, data, object_states, lambdas_dict) -> torch.Tensor:
+    def l1_loss(self, data, object_states, lambdas_dict) -> Dict[str, torch.Tensor]:
         gt_values = data["object"].y.flatten()
         pred_values = object_states.flatten()
         for edge_type in OUTPUT_FEATURE_DIMS.keys():
@@ -40,16 +41,16 @@ class GNNLoss(torch.nn.Module):
             if edge_type in data.edge_types and edge_type in lambdas_dict:
                 gt_values = torch.cat([gt_values, data[edge_type].y.flatten()])
                 pred_values = torch.cat([pred_values, lambdas_dict[edge_type].flatten()])
-        return F.l1_loss(pred_values, gt_values)
+        return {"total_loss": (F.l1_loss(pred_values, gt_values), gt_values.shape[0])}
 
-    def weighted_l1_loss(self, data, object_states, lambdas_dict) -> torch.Tensor:
+    def weighted_l1_loss(self, data, object_states, lambdas_dict) -> Dict[str, torch.Tensor]:
         gt_values = data["object"].y.flatten()
         pred_values = object_states.flatten()
         weight = torch.ones_like(pred_values)
         for edge_type in OUTPUT_FEATURE_DIMS.keys():
             if not isinstance(edge_type, tuple):
                 continue
-            if edge_type in data.edge_types and data[edge_type].shape[1] > 0:
+            if edge_type in data.edge_types and data[edge_type].edge_index.shape[1] > 0:
                 gt_edge = data[edge_type].y.flatten()
                 pred_edge = lambdas_dict[edge_type].flatten()
                 gt_values = torch.cat([gt_values, gt_edge])
@@ -59,12 +60,15 @@ class GNNLoss(torch.nn.Module):
                 dim = gt_edge.numel() // target_indices.numel()
                 edge_weight = (1.0 / target_masses).repeat_interleave(dim)
                 weight = torch.cat([weight, edge_weight])
-        return F.l1_loss(pred_values, gt_values, weight=weight)
+        return {
+            "total_loss": (F.l1_loss(pred_values, gt_values, weight=weight), gt_values.shape[0])
+        }
 
-    def residue_loss(self, data, object_states, lambdas_dict) -> torch.Tensor:
+    def residue_loss(self, data, object_states, lambdas_dict) -> Dict[str, torch.Tensor]:
         device = self.device
         self.dummy_solver.restitutions = data["object"].x[:, 0]
         self.dummy_solver.inv_masses = 1 / data["object"].x[:, [1, 1, 2]]
+        self.dummy_solver.num_shapes = data["object"].num_nodes
         state_init = data["object"].x[:, [3, 4, 6]]
         counts = torch.zeros(data["object"].num_nodes, dtype=torch.long, device=device)
         cons = {
@@ -101,17 +105,22 @@ class GNNLoss(torch.nn.Module):
                 cons["l_vals"].append((b, counts[b].item(), preds[i]))
                 counts[b] += 1
         if not cons["body"]:
-            return torch.tensor(0.0, device=device, requires_grad=True)
-        constraints = {
-            "body_idx": torch.tensor(cons["body"], device=device),
-            "neighbor_idx": torch.tensor(cons["neigh"], device=device),
-            "local_idx": torch.tensor(cons["local"], device=device),
-            "dist": torch.stack(cons["dist"]),
-            "jac": torch.stack(cons["J"]),
-            "jac_neigh": torch.stack(cons["Jn"]),
-            "is_equality": torch.tensor(cons["eq"], device=device),
-            "counts": counts,
-        }
+            constraints = {
+                "body_idx": torch.empty(0, dtype=torch.long, device=device),
+                "counts": torch.zeros(data["object"].num_nodes, dtype=torch.long, device=device),
+            }
+        else:
+            constraints = {
+                "body_idx": torch.tensor(cons["body"], dtype=torch.long, device=device),
+                "neighbor_idx": torch.tensor(cons["neigh"], dtype=torch.long, device=device),
+                "local_idx": torch.tensor(cons["local"], dtype=torch.long, device=device),
+                "dist": torch.stack(cons["dist"]),
+                "jac": torch.stack(cons["J"]),
+                "jac_neigh": torch.stack(cons["Jn"]),
+                "is_equality": torch.tensor(cons["eq"], dtype=torch.bool, device=device),
+                "counts": counts,
+            }
+
         state = torch.zeros((len(counts), 3 + int(counts.max().item())), device=device)
         state[:, :3] = object_states
         if cons["l_vals"]:
@@ -119,5 +128,24 @@ class GNNLoss(torch.nn.Module):
             state[torch.tensor(b, device=device), 3 + torch.tensor(l, device=device)] = torch.stack(
                 v
             )
-        res = self.dummy_solver.resudial_fn(state, state_init, constraints)
-        return torch.norm(res)
+
+        res_flat = self.dummy_solver.resudial_fn(state, state_init, constraints)
+        res_unflat_shape = self.dummy_solver.state_shape(constraints)
+        res_unflat = res_flat.view(res_unflat_shape)
+        vel_res = res_unflat[:, :3]
+        body_idxs = constraints["body_idx"]
+        if body_idxs.numel() > 0:
+            is_equality = constraints["is_equality"]
+            lambda_res_all = res_unflat[body_idxs, 3 + constraints["local_idx"]]
+            joint_lambda_res = lambda_res_all[is_equality]
+            contact_lambda_res = lambda_res_all[~is_equality]
+        else:
+            joint_lambda_res = torch.empty(0, device=device)
+            contact_lambda_res = torch.empty(0, device=device)
+
+        return {
+            "total_loss": (torch.linalg.vector_norm(res_unflat, dim=1).mean(), res_unflat.shape[0]),
+            "vel_res": (vel_res.abs().mean(), vel_res.shape[0]),
+            "contact_res": (contact_lambda_res.abs().mean(), contact_lambda_res.shape[0]),
+            "joint_res": (joint_lambda_res.abs().mean(), joint_lambda_res.shape[0]),
+        }
