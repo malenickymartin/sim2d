@@ -146,6 +146,12 @@ class GNNLoss(torch.nn.Module):
         return {
             "total_loss": (torch.linalg.vector_norm(res_unflat, dim=1).mean(), res_unflat.shape[0]),
             "vel_res": (vel_res.abs().mean(), vel_res.shape[0]),
-            "contact_res": (contact_lambda_res.abs().mean(), contact_lambda_res.shape[0]),
-            "joint_res": (joint_lambda_res.abs().mean(), joint_lambda_res.shape[0]),
+            "contact_res": (
+                torch.nan_to_num(contact_lambda_res.abs().mean()),
+                contact_lambda_res.shape[0],
+            ),
+            "joint_res": (
+                torch.nan_to_num(joint_lambda_res.abs().mean()),
+                joint_lambda_res.shape[0],
+            ),
         }
