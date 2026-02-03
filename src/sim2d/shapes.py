@@ -90,7 +90,7 @@ class Point(Circle):
             restitution,
             radius=torch.tensor(0.0),
         )
-        self.inertia = self.mass.clone()
+        self.inertia = torch.tensor(0.0)
 
 
 class Rectangle(Shape):

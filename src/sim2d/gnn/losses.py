@@ -66,10 +66,9 @@ class GNNLoss(torch.nn.Module):
 
     def residue_loss(self, data, object_states, lambdas_dict) -> Dict[str, torch.Tensor]:
         device = self.device
-        self.dummy_solver.restitutions = data["object"].x[:, 0]
-        self.dummy_solver.inv_masses = 1 / data["object"].x[:, [1, 1, 2]]
+        self.dummy_solver.inv_masses = 1 / data["object"].x[:, [0, 0, 1]]
         self.dummy_solver.num_shapes = data["object"].num_nodes
-        state_init = data["object"].x[:, [3, 4, 6]]
+        state_init = data["object"].x[:, [2, 3, 5]]
         counts = torch.zeros(data["object"].num_nodes, dtype=torch.long, device=device)
         cons = {
             "body": [],
@@ -80,6 +79,7 @@ class GNNLoss(torch.nn.Module):
             "Jn": [],
             "eq": [],
             "l_vals": [],
+            "restitution": [],
         }
         for (src, name, dst), edges in data.edge_items():
             if edges.num_edges == 0 or (src, name, dst) not in lambdas_dict:
@@ -93,6 +93,9 @@ class GNNLoss(torch.nn.Module):
             J_neigh = edges.edge_attr[idx + 1, :3] if is_obj_obj else torch.zeros_like(J_body)
             dists = edges.edge_attr[idx, 3]
             preds = lambdas_dict[(src, name, dst)].view(-1)[idx]
+            is_joint = "joint" in name
+            if not is_joint:
+                restitutions = edges.edge_attr[idx, 4]
             for i, b_idx in enumerate(bodies):
                 b = b_idx.item()
                 cons["body"].append(b)
@@ -101,8 +104,12 @@ class GNNLoss(torch.nn.Module):
                 cons["dist"].append(dists[i])
                 cons["J"].append(J_body[i])
                 cons["Jn"].append(J_neigh[i])
-                cons["eq"].append("joint" in name)
+                cons["eq"].append(is_joint)
                 cons["l_vals"].append((b, counts[b].item(), preds[i]))
+                if is_joint:
+                    cons["restitution"].append(torch.tensor(0.0, device=device))
+                else:
+                    cons["restitution"].append(restitutions[i])
                 counts[b] += 1
         if not cons["body"]:
             constraints = {
@@ -118,6 +125,7 @@ class GNNLoss(torch.nn.Module):
                 "jac": torch.stack(cons["J"]),
                 "jac_neigh": torch.stack(cons["Jn"]),
                 "is_equality": torch.tensor(cons["eq"], dtype=torch.bool, device=device),
+                "restitution": torch.stack(cons["restitution"]),
                 "counts": counts,
             }
 

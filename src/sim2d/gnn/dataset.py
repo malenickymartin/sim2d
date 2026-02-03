@@ -12,10 +12,10 @@ from torch_geometric.data import InMemoryDataset, HeteroData
 
 from sim2d.joints import JOINT_NUM_CONSTR
 
-NODE_FEATURE_DIMS = {"object": 7, "floor": 1}
+NODE_FEATURE_DIMS = {"object": 6, "floor": 0}
 EDGE_FEATURE_DIMS = {
-    ("object", "contact", "object"): 4,
-    ("floor", "contact", "object"): 4,
+    ("object", "contact", "object"): 5,
+    ("floor", "contact", "object"): 5,
     ("object", "fixed_joint", "object"): 12,
     ("object", "revolute_joint", "object"): 8,
     ("object", "prismatic_joint", "object"): 8,
@@ -124,7 +124,6 @@ class DatasetSim2D(InMemoryDataset):
         for i in range(config["shapes"]["num_shapes"][()]):
             nodes_object.append(
                 [
-                    config["shapes"]["restitutions"][i],
                     config["shapes"]["masses"][i],
                     config["shapes"]["inertias"][i],
                     step["shapes_data"]["velocity"][i][0],
@@ -145,15 +144,13 @@ class DatasetSim2D(InMemoryDataset):
 
         # -- Floor --
         if config["floor"]["active"][()]:
-            data["floor"].x = torch.tensor(
-                [[config["floor"]["restitution"][()]]], dtype=torch.float32
-            )
+            data["floor"].x = torch.zeros((1, 0), dtype=torch.float32)
         elif (config["joints"]["num_joints"][()] > 0) and (
             config["joints"]["parent_idxs"][()] == -1
         ).any():
-            data["floor"].x = torch.tensor([[0.0]], dtype=torch.float32)
+            data["floor"].x = torch.zeros((1, 0), dtype=torch.float32)
         else:
-            data["floor"].x = torch.zeros((0, 1), dtype=torch.float32)
+            data["floor"].x = torch.zeros((0, 0), dtype=torch.float32)
 
         # --- Edges ---
         # -- Contacts --
@@ -169,8 +166,11 @@ class DatasetSim2D(InMemoryDataset):
             J_1, J_2 = step["contacts_data"]["Js"][i]
             dist = step["contacts_data"]["distances"][i]
             if idx_2 != -1:
-                attrs_object_object.append([J_1[0], J_1[1], J_1[2], dist])
-                attrs_object_object.append([J_2[0], J_2[1], J_2[2], dist])
+                restitution = (
+                    config["shapes"]["restitutions"][idx_1] + config["shapes"]["restitutions"][i]
+                ) / 2
+                attrs_object_object.append([J_1[0], J_1[1], J_1[2], dist, restitution])
+                attrs_object_object.append([J_2[0], J_2[1], J_2[2], dist, restitution])
                 indices_object_object.append([idx_2, idx_1])
                 indices_object_object.append([idx_1, idx_2])
                 preds_object_object.append(
@@ -181,7 +181,10 @@ class DatasetSim2D(InMemoryDataset):
                 )
                 object_lambda_counter[idx_1] += 1
             else:
-                attrs_floor_object.append([J_1[0], J_1[1], J_1[2], dist])
+                restitution = (
+                    config["shapes"]["restitutions"][idx_1] + config["floor"]["restitution"]
+                ) / 2
+                attrs_floor_object.append([J_1[0], J_1[1], J_1[2], dist, restitution])
                 indices_floor_object.append([0, idx_1])
                 preds_floor_object.append(
                     [step_next["contacts_data"]["lambdas"][idx_1][object_lambda_counter[idx_1]]]

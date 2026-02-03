@@ -123,6 +123,7 @@ class Simulator(ABC):
         c_jac = []
         c_jac_neigh = []
         c_neigh = []
+        c_restitution = []
         c_counts = torch.zeros(self.num_shapes, dtype=torch.long, device=self.device)
         shapes = self.shapes + [self.floor] if not self.floor is None else self.shapes
         if len(shapes) >= 2:
@@ -147,12 +148,22 @@ class Simulator(ABC):
                         c_jac.append(J_1)
                         c_jac_neigh.append(J_2)
                         c_counts[i] += 1
+                        restitutions = (
+                            shape_1.restitution
+                            + (
+                                shape_2.restitution
+                                if not isinstance(shape_2, Floor)
+                                else self.floor.restitution
+                            )
+                        ) / 2
+                        c_restitution.append(restitutions)
 
         contacts = {
             "body_idx": torch.tensor(c_body_idx, dtype=torch.long, device=self.device),
             "neighbor_idx": torch.tensor(c_neigh, dtype=torch.long, device=self.device),
             "local_idx": torch.tensor(c_local_idx, dtype=torch.long, device=self.device),
             "dist": torch.tensor(c_dist, dtype=torch.float32, device=self.device),
+            "restitution": torch.tensor(c_restitution, dtype=torch.float32, device=self.device),
             "jac": (
                 torch.stack(c_jac).to(self.device)
                 if len(c_jac) > 0
@@ -225,6 +236,12 @@ class Simulator(ABC):
             "jac": torch.cat([contacts["jac"], joints["jac"]]),
             "jac_neigh": torch.cat([contacts["jac_neigh"], joints["jac_neigh"]]),
             "dist": torch.cat([contacts["dist"], joints["error"]]),
+            "restitution": torch.cat(
+                [
+                    contacts["restitution"],
+                    torch.zeros(len(joints["body_idx"]), dtype=torch.float32, device=self.device),
+                ]
+            ),
             "is_equality": torch.cat(
                 [
                     contacts["is_equality"],
@@ -243,7 +260,6 @@ class Simulator(ABC):
         for i in range(self.num_shapes):
             gnn_data["object"].x[i][:] = torch.tensor(
                 [
-                    self.shapes[i].restitution,
                     self.shapes[i].mass,
                     self.shapes[i].inertia,
                     state[i][0],
@@ -255,11 +271,9 @@ class Simulator(ABC):
             )
 
         if self.floor is not None:
-            gnn_data["floor"].x = torch.tensor(
-                [[self.floor.restitution]], dtype=torch.float32, device=self.device
-            )
+            gnn_data["floor"].x = torch.zeros((1, 0), dtype=torch.float32, device=self.device)
         else:
-            gnn_data["floor"].x = torch.zeros((0, 1), dtype=torch.float32, device=self.device)
+            gnn_data["floor"].x = torch.zeros((0, 0), dtype=torch.float32, device=self.device)
 
         mask_eq = constraints["is_equality"]
 
@@ -272,6 +286,7 @@ class Simulator(ABC):
                 [
                     constraints["jac"][mask_contacts],
                     constraints["dist"][mask_contacts].unsqueeze(1),
+                    constraints["restitution"][mask_contacts].unsqueeze(1),
                 ],
                 dim=1,
             )
@@ -279,6 +294,7 @@ class Simulator(ABC):
                 [
                     constraints["jac_neigh"][mask_contacts],
                     constraints["dist"][mask_contacts].unsqueeze(1),
+                    constraints["restitution"][mask_contacts].unsqueeze(1),
                 ],
                 dim=1,
             )

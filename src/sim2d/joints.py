@@ -127,19 +127,23 @@ def compute_joint_constraints(
         J1_x, J2_x = torch.zeros(3, device=device), torch.zeros(3, device=device)
         J1_x[:2] = n_x
         J1_x[2] = _perp(r_1).dot(n_x)
+        J1_x = J1_x / J1_x.norm()
         if shape_2:
             J2_x[:2] = -n_x
             J2_x[2] = _perp(r_2).dot(-n_x)
-        constraints.append((J1_x / J1_x.norm(), J2_x / J2_x.norm(), diff[0]))
+            J2_x = J2_x / J2_x.norm()
+        constraints.append((J1_x, J2_x, diff[0]))
 
         n_y = torch.tensor([0.0, 1.0], device=device)
         J1_y, J2_y = torch.zeros(3, device=device), torch.zeros(3, device=device)
         J1_y[:2] = n_y
         J1_y[2] = _perp(r_1).dot(n_y)
+        J1_y = J1_y / J1_y.norm()
         if shape_2:
             J2_y[:2] = -n_y
             J2_y[2] = _perp(r_2).dot(-n_y)
-        constraints.append((J1_y / J1_y.norm(), J2_y / J2_y.norm(), diff[1]))
+            J2_y = J2_y / J2_y.norm()
+        constraints.append((J1_y, J2_y, diff[1]))
 
     elif isinstance(joint, FixedJoint):
         for i, n in enumerate(
@@ -148,10 +152,12 @@ def compute_joint_constraints(
             J1, J2 = torch.zeros(3, device=device), torch.zeros(3, device=device)
             J1[:2] = n
             J1[2] = _perp(r_1).dot(n)
+            J1 = J1 / J1.norm()
             if shape_2:
                 J2[:2] = -n
                 J2[2] = _perp(r_2).dot(-n)
-            constraints.append((J1 / J1.norm(), J2 / J2.norm(), diff[i]))
+                J2 = J2 / J2.norm()
+            constraints.append((J1, J2, diff[i]))
 
         target_angle_1 = theta_1 + joint.child_target_rotation
         target_angle_2 = theta_2 + joint.parent_target_rotation
@@ -160,13 +166,13 @@ def compute_joint_constraints(
 
         J1_a = torch.tensor([0.0, 0.0, 1.0], device=device)
         J2_a = torch.tensor([0.0, 0.0, -1.0], device=device)
-        constraints.append((J1_a / J1_a.norm(), J2_a / J2_a.norm(), ang_diff))
+        constraints.append((J1_a, J2_a, ang_diff))
 
     elif isinstance(joint, PrismaticJoint):
         ang_diff = theta_1 - theta_2
         J1_a = torch.tensor([0.0, 0.0, 1.0], device=device)
         J2_a = torch.tensor([0.0, 0.0, -1.0], device=device)
-        constraints.append((J1_a / J1_a.norm(), J2_a / J2_a.norm(), ang_diff))
+        constraints.append((J1_a, J2_a, ang_diff))
 
         axis_world = R_1 @ joint.axis
         perp_axis = _perp(axis_world)
@@ -175,12 +181,12 @@ def compute_joint_constraints(
         J1_p = torch.zeros(3, device=device)
         J1_p[:2] = perp_axis
         J1_p[2] = diff.dot(axis_world) + _perp(r_1).dot(perp_axis)
-
+        J1_p = J1_p / J1_p.norm()
         J2_p = torch.zeros(3, device=device)
         if shape_2:
             J2_p[:2] = -perp_axis
             J2_p[2] = _perp(r_2).dot(-perp_axis)
-
-        constraints.append((J1_p / J1_p.norm(), J2_p / J2_p.norm(), dist_perp))
+            J2_p = J2_p / J2_p.norm()
+        constraints.append((J1_p, J2_p, dist_perp))
 
     return constraints
