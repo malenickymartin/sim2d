@@ -10,8 +10,6 @@ import sim2d
 from sim2d import Shape
 from sim2d.engine import EngineLogger
 
-np.random.seed(0)
-
 
 def rotate_vec(vec: torch.Tensor, angle: torch.Tensor) -> torch.Tensor:
     angle = torch.as_tensor(angle)
