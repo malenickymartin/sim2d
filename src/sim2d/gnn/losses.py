@@ -67,6 +67,7 @@ class GNNLoss(torch.nn.Module):
     def residue_loss(self, data, object_states, lambdas_dict) -> Dict[str, torch.Tensor]:
         device = self.device
         self.dummy_solver.inv_masses = 1 / data["object"].x[:, [0, 0, 1]]
+        self.dummy_solver.inv_masses[torch.isinf(self.dummy_solver.inv_masses)] = 0.0
         self.dummy_solver.num_shapes = data["object"].num_nodes
         state_init = data["object"].x[:, [2, 3, 5]]
         counts = torch.zeros(data["object"].num_nodes, dtype=torch.long, device=device)
