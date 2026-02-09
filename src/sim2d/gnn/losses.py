@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 from .dataset import EDGE_FEATURE_DIMS, OUTPUT_FEATURE_DIMS
 from sim2d.engine import EulerSolver
+from sim2d.joints import JOINT_NUM_CONSTR, JOINT_STR_TO_INT
 
 
 class GNNLoss(torch.nn.Module):
@@ -86,32 +87,45 @@ class GNNLoss(torch.nn.Module):
             if edges.num_edges == 0 or (src, name, dst) not in lambdas_dict:
                 continue
             is_obj_obj = src == "object" and dst == "object"
-            step = 2 if is_obj_obj else 1
-            idx = torch.arange(0, edges.num_edges, step, device=device)
-            bodies = edges.edge_index[1, idx]
-            neighs = edges.edge_index[0, idx] if is_obj_obj else torch.full_like(bodies, -1)
-            J_body = edges.edge_attr[idx, :3]
-            J_neigh = edges.edge_attr[idx + 1, :3] if is_obj_obj else torch.zeros_like(J_body)
-            dists = edges.edge_attr[idx, 3]
-            preds = lambdas_dict[(src, name, dst)].view(-1)[idx]
             is_joint = "joint" in name
-            if not is_joint:
-                restitutions = edges.edge_attr[idx, 4]
-            for i, b_idx in enumerate(bodies):
-                b = b_idx.item()
-                cons["body"].append(b)
-                cons["neigh"].append(neighs[i].item())
-                cons["local"].append(counts[b].item())
-                cons["dist"].append(dists[i])
-                cons["J"].append(J_body[i])
-                cons["Jn"].append(J_neigh[i])
-                cons["eq"].append(is_joint)
-                cons["l_vals"].append((b, counts[b].item(), preds[i]))
-                if is_joint:
-                    cons["restitution"].append(torch.tensor(0.0, device=device))
+            step = 2 if is_obj_obj else 1
+            num_constraints = JOINT_NUM_CONSTR[JOINT_STR_TO_INT[name]] if is_joint else 1
+            edge_idxs = torch.arange(0, edges.num_edges, step, device=device)
+
+            bodies = edges.edge_index[1, edge_idxs]
+            neighs = edges.edge_index[0, edge_idxs] if is_obj_obj else torch.full_like(bodies, -1)
+            preds_all = lambdas_dict[(src, name, dst)][edge_idxs]
+            for k in range(num_constraints):
+                attr_offset = k * 4
+                J_body = edges.edge_attr[edge_idxs, attr_offset : attr_offset + 3]
+                dists = edges.edge_attr[edge_idxs, attr_offset + 3]
+                if is_obj_obj:
+                    if is_joint:
+                        J_neigh = edges.edge_attr[edge_idxs + 1, attr_offset : attr_offset + 3]
+                    else:
+                        J_neigh = edges.edge_attr[edge_idxs + 1, attr_offset : attr_offset + 3]
                 else:
-                    cons["restitution"].append(restitutions[i])
-                counts[b] += 1
+                    J_neigh = torch.zeros_like(J_body)
+                preds = preds_all[:, k]
+                if not is_joint:
+                    restitutions = edges.edge_attr[edge_idxs, 4]
+
+                for i, b_idx in enumerate(bodies):
+                    b = b_idx.item()
+                    cons["body"].append(b)
+                    cons["neigh"].append(neighs[i].item())
+                    cons["local"].append(counts[b].item())
+                    cons["dist"].append(dists[i])
+                    cons["J"].append(J_body[i])
+                    cons["Jn"].append(J_neigh[i])
+                    cons["eq"].append(is_joint)
+                    cons["l_vals"].append((b, counts[b].item(), preds[i]))
+                    if is_joint:
+                        cons["restitution"].append(torch.tensor(0.0, device=device))
+                    else:
+                        cons["restitution"].append(restitutions[i])
+                    counts[b] += 1
+
         if not cons["body"]:
             constraints = {
                 "body_idx": torch.empty(0, dtype=torch.long, device=device),

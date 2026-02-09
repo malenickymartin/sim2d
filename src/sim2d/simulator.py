@@ -325,26 +325,26 @@ class Simulator(ABC):
             for joint in self.joints:
                 n_c = JOINT_NUM_CONSTR[joint_to_int(joint)]
                 j_name = JOINT_INT_TO_STR[joint_to_int(joint)]
-                attr_1 = torch.cat(
+                attr_child = torch.cat(
                     [
                         torch.cat([j_jac[curr + k], j_dist[curr + k : curr + k + 1]])
                         for k in range(n_c)
                     ]
                 )
                 if joint.parent_idx == -1:
-                    joint_edges[(j_name, "floor")].append((0, joint.child_idx, attr_1))
+                    joint_edges[(j_name, "floor")].append((0, joint.child_idx, attr_child))
                 else:
-                    attr_2 = torch.cat(
+                    attr_parent = torch.cat(
                         [
                             torch.cat([j_jac_n[curr + k], j_dist[curr + k : curr + k + 1]])
                             for k in range(n_c)
                         ]
                     )
                     joint_edges[(j_name, "object")].append(
-                        (joint.parent_idx, joint.child_idx, attr_1)
+                        (joint.parent_idx, joint.child_idx, attr_child)
                     )
                     joint_edges[(j_name, "object")].append(
-                        (joint.child_idx, joint.parent_idx, attr_2)
+                        (joint.child_idx, joint.parent_idx, attr_parent)
                     )
                 curr += n_c
 

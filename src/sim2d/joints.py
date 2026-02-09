@@ -74,6 +74,7 @@ class RevoluteJoint(Joint):
 JOINT_TO_INT = {FixedJoint: 0, RevoluteJoint: 1, PrismaticJoint: 2}
 INT_TO_JOINT = {v: k for k, v in JOINT_TO_INT.items()}
 JOINT_INT_TO_STR = {0: "fixed_joint", 1: "revolute_joint", 2: "prismatic_joint"}
+JOINT_STR_TO_INT = {v: k for k, v in JOINT_INT_TO_STR.items()}
 JOINT_NUM_CONSTR = {0: 3, 1: 2, 2: 2}
 
 

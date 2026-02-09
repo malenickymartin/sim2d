@@ -175,6 +175,8 @@ class Processor(nn.Module):
             for edge_type in edge_index_dict.keys():
                 src_type, _, dst_type = edge_type
                 edge_index = edge_index_dict[edge_type]
+                if edge_index.shape[1] == 0:
+                    continue
                 edge_attr = edge_attr_dict[edge_type]
                 if src_type == dst_type:
                     x = x_dict[src_type]
