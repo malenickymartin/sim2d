@@ -73,10 +73,12 @@ class SimulatorGenerator(sim2d.Simulator):
         translation = torch.zeros(2)
         rotation = torch.tensor(0.0)
         if np.random.random() <= 0.15:
-            return sim2d.Point(translation, velocity, mass, restitution)
+            return sim2d.Point(translation, rotation, velocity, angular_velocity, mass, restitution)
         else:
             radius = np.random.uniform(0.05, 0.5)
-            return sim2d.Circle(translation, velocity, mass, restitution, radius)
+            return sim2d.Circle(
+                translation, rotation, velocity, angular_velocity, mass, restitution, radius
+            )
 
     def setup_joint_connection(self, child_shape: Shape, parent_shape: Shape, parent_idx: int):
         def _sample_stadium(p1, p2, radius):

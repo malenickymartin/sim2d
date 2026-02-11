@@ -54,16 +54,18 @@ class Circle(Shape):
     def __init__(
         self,
         translation: torch.Tensor,
+        rotation: torch.Tensor,
         velocity: torch.Tensor,
+        angular_velocity: torch.Tensor,
         mass: torch.Tensor,
         restitution: torch.Tensor,
         radius: torch.Tensor,
     ):
         super().__init__(
             translation,
-            torch.tensor(0.0),
+            rotation,
             velocity,
-            torch.tensor(0.0),
+            angular_velocity,
             mass,
             restitution,
             mass * radius**2 / 2.0,
@@ -79,13 +81,17 @@ class Point(Circle):
     def __init__(
         self,
         translation: torch.Tensor,
+        rotation: torch.Tensor,
         velocity: torch.Tensor,
+        angular_velocity: torch.Tensor,
         mass: torch.Tensor,
         restitution: torch.Tensor,
     ):
         super().__init__(
             translation,
+            rotation,
             velocity,
+            angular_velocity,
             mass,
             restitution,
             radius=torch.tensor(0.0),

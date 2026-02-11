@@ -38,7 +38,9 @@ class SimulatorBenchmark(sim2d.Simulator):
                 if sim2d.shapes.int_to_shape(types[i]) == sim2d.shapes.Circle:
                     shape = sim2d.shapes.Circle(
                         translation=torch.zeros(2),
+                        rotation=torch.tensor(0.0),
                         velocity=torch.zeros(2),
+                        angular_velocity=torch.tensor(0.0),
                         mass=float(masses[i]),
                         restitution=float(restitutions[i]),
                         radius=radii[i],
@@ -46,7 +48,9 @@ class SimulatorBenchmark(sim2d.Simulator):
                 elif sim2d.shapes.int_to_shape(types[i]) == sim2d.shapes.Point:
                     shape = sim2d.shapes.Point(
                         translation=torch.zeros(2),
+                        rotation=torch.tensor(0.0),
                         velocity=torch.zeros(2),
+                        angular_velocity=torch.tensor(0.0),
                         mass=float(masses[i]),
                         restitution=float(restitutions[i]),
                     )

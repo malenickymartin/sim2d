@@ -38,6 +38,7 @@ class Simulator(ABC):
             if device is None
             else device
         )
+        self.init_gnn_path = init_gnn_path
 
         self.num_steps = int(sim_time // dt + sim_time % dt)
         self.newton_iters = newton_iters
@@ -62,8 +63,8 @@ class Simulator(ABC):
             joint.to(self.device)
 
         self.gnn = None
-        if not init_gnn_path is None:
-            self.gnn = torch.load(init_gnn_path, self.device, weights_only=False)
+        if not self.init_gnn_path is None:
+            self.gnn = torch.load(self.init_gnn_path, self.device, weights_only=False)
             self.gnn.eval()
 
         self.solver = EulerSolver(
