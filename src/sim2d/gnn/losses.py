@@ -57,7 +57,7 @@ class GNNLoss(torch.nn.Module):
                 gt_values = torch.cat([gt_values, gt_edge])
                 pred_values = torch.cat([pred_values, pred_edge])
                 target_indices = data[edge_type].edge_index[1]
-                target_masses = data["object"].x[target_indices, 1]
+                target_masses = data["object"].x[target_indices, 0]
                 dim = gt_edge.numel() // target_indices.numel()
                 edge_weight = (1.0 / target_masses).repeat_interleave(dim)
                 weight = torch.cat([weight, edge_weight])

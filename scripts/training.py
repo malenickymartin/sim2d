@@ -36,7 +36,7 @@ def train_epoch(
             total_losses[k] += v[0].item() * v[1]
             loss_counts[k] += v[1]
         pbar.set_postfix({"loss": f"{total_losses['total_loss']/loss_counts['total_loss']:.4f}"})
-    return {k: v / loss_counts[k] for k, v in total_losses.items()}
+    return {k: v / loss_counts[k] if loss_counts[k] else 0.0 for k, v in total_losses.items()}
 
 
 def validate_epoch(
@@ -62,7 +62,7 @@ def validate_epoch(
             pbar.set_postfix(
                 {"loss": f"{total_losses['total_loss']/loss_counts['total_loss']:.4f}"}
             )
-    return {k: v / loss_counts[k] for k, v in total_losses.items()}
+    return {k: v / loss_counts[k] if loss_counts[k] else 0.0 for k, v in total_losses.items()}
 
 
 def train(
@@ -131,11 +131,13 @@ def main(config):
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr_init"])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.2, threshold=0.001)
     model.to(config["device"])
+    wandb_group_name = config["wandb"].split("/") if not config["wandb"] is None else [""]
     wandb.init(
         project="sim2d-gnn",
         config=config,
-        name=config["model_name"].split(".")[0],
-        mode="online" if config["wandb"] else "disabled",
+        group=wandb_group_name[0] if len(wandb_group_name) > 1 else None,
+        name=wandb_group_name[-1],
+        mode="online" if not config["wandb"] is None else "disabled",
     )
     wandb.config.update(
         {
@@ -166,8 +168,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--dataset_root", type=Path, default=Path("data/test_dataset/"))
     parser.add_argument("--model_name", type=str, default="model.pt")
-    parser.add_argument("--wandb", action="store_true", dest="wandb")
-    parser.set_defaults(wandb=False)
+    parser.add_argument("--wandb", type=str, default=None)
 
     args = parser.parse_args()
     config = vars(args)
