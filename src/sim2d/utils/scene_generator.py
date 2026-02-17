@@ -187,7 +187,12 @@ class SceneGenerator(sim2d.Simulator):
         return False
 
     def add_joint(
-        self, joint_type=None, shape_idx_1=None, shape_idx_2=None, coincide_prob=0.5
+        self,
+        joint_type=None,
+        shape_idx_1=None,
+        shape_idx_2=None,
+        coincide_prob=0.5,
+        velocity_case: Optional[str] = None,
     ) -> bool:
         if not self.shapes:
             raise ValueError("Not enough shapes to create a joint.")
@@ -261,4 +266,42 @@ class SceneGenerator(sim2d.Simulator):
             raise ValueError(f"Unsupported joint type: {joint_type}")
 
         self.joints.append(joint)
+
+        if velocity_case is None:
+            chosen_velocity_case = np.random.choice(
+                ["constrain", "zero", "original"], p=[0.4, 0.1, 0.5]
+            )
+        else:
+            chosen_velocity_case = velocity_case
+
+        if chosen_velocity_case == "zero":
+            shape_1.velocity = torch.zeros_like(shape_1.velocity)
+            shape_1.angular_velocity = torch.tensor(0.0, device=self.device)
+            if shape_idx_2 != -1:
+                shape_2.velocity = torch.zeros_like(shape_2.velocity)
+                shape_2.angular_velocity = torch.tensor(0.0, device=self.device)
+        elif chosen_velocity_case == "constrain":
+            if joint_type == RevoluteJoint:
+                r1_world = world_anchor - shape_1.translation
+                if r1_world.norm() > 1e-6:
+                    r1_norm = r1_world / r1_world.norm()
+                    shape_1.velocity = (
+                        shape_1.velocity - torch.dot(shape_1.velocity, r1_norm) * r1_norm
+                    )
+                if shape_idx_2 != -1:
+                    r2_world = world_anchor - shape_2.translation
+                    if r2_world.norm() > 1e-6:
+                        r2_norm = r2_world / r2_world.norm()
+                        shape_2.velocity = (
+                            shape_2.velocity - torch.dot(shape_2.velocity, r2_norm) * r2_norm
+                        )
+            elif joint_type == FixedJoint:
+                if shape_idx_2 != -1:
+                    avg_v = (shape_1.velocity + shape_2.velocity) / 2.0
+                    shape_1.velocity = avg_v
+                    shape_2.velocity = avg_v
+                    avg_w = (shape_1.angular_velocity + shape_2.angular_velocity) / 2.0
+                    shape_1.angular_velocity = avg_w
+                    shape_2.angular_velocity = avg_w
+
         return True

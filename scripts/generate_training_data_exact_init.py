@@ -42,7 +42,6 @@ class CustomDatasetGenerator(SceneGenerator):
             if shapes_placed == 0 and strategy in [2, 3]:
                 strategy = np.random.choice([0, 1])
             succ = False
-            print(strategy)
             if strategy == 0:
                 succ = self.add_shape(Circle)
             elif strategy == 1:
