@@ -50,8 +50,8 @@ def compute_collision(
         collision_distance >= 0.0
     ), f"collision distance is not positive, collision_distance = {collision_distance}"
     assert not active or (
-        (torch.norm(J_1) - 1.0) < 1e-6 and (torch.norm(J_2) - 1.0) < 1e-6
-    ), f"collision normals are not unit lenght, norm(J_1) = {torch.norm(J_1)}, norm(J_2) = {torch.norm(J_2)}"
+        (torch.norm(J_1[:2]) - 1.0) < 1e-6 and (torch.norm(J_2[:2]) - 1.0) < 1e-6
+    ), f"translation part of collision normals are not unit lenght, norm(J_1) = {torch.norm(J_1[:2])}, norm(J_2) = {torch.norm(J_2[:2])}"
     return active, collision_distance, J_1, J_2
 
 
@@ -195,8 +195,6 @@ def rect_rect(shape_1: Rectangle, shape_2: Rectangle) -> tuple[bool, float, torc
     J_2[:2] = -normal
     r2 = contact_point - shape_2.translation
     J_2[2] = r2[0] * (-normal[1]) - r2[1] * (-normal[0])
-    J_1 = J_1 / torch.norm(J_1)
-    J_2 = J_2 / torch.norm(J_2)
 
     return active, collision_distance, J_1, J_2
 
@@ -234,9 +232,6 @@ def point_rect(shape_1: Point, shape_2: Rectangle) -> tuple[bool, float, torch.T
         f_rect = -normal_world
         J_2[2] = r[0] * f_rect[1] - r[1] * f_rect[0]
 
-        J_1 = J_1 / torch.norm(J_1)
-        J_2 = J_2 / torch.norm(J_2)
-
     return active, collision_distance, J_1, J_2
 
 
@@ -257,8 +252,6 @@ def rect_floor(shape_1: Rectangle, shape_2: Floor) -> tuple[bool, float, torch.T
         J_1[2] = r[0] * normal[1] - r[1] * normal[0]
 
         J_2[1] = -1.0
-        J_1 = J_1 / torch.norm(J_1)
-        J_2 = J_2 / torch.norm(J_2)
 
     return active, collision_distance, J_1, J_2
 
@@ -298,7 +291,6 @@ def rect_circle(shape_1: Rectangle, shape_2: Circle) -> tuple[bool, float, torch
 
         collision_distance = shape_2.radius + min_dist
         contact_local = c_local + normal_local * min_dist
-        contact_local = c_local
 
     elif dist_sq < shape_2.radius**2:
         active = True
@@ -320,8 +312,5 @@ def rect_circle(shape_1: Rectangle, shape_2: Circle) -> tuple[bool, float, torch
     f_rect = -normal_world
     J_1[2] = r[0] * f_rect[1] - r[1] * f_rect[0]
     J_2[:2] = normal_world
-
-    J_1 = J_1 / torch.norm(J_1)
-    J_2 = J_2 / torch.norm(J_2)
 
     return active, collision_distance, J_1, J_2

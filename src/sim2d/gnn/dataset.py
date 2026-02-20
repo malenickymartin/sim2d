@@ -10,7 +10,7 @@ import h5py
 import torch
 from torch_geometric.data import InMemoryDataset, HeteroData
 
-from sim2d.joints import JOINT_NUM_CONSTR
+from sim2d.joints import JOINT_NUM_CONSTR, JOINT_INT_TO_STR
 
 NODE_FEATURE_DIMS = {"object": 6, "floor": 0}
 EDGE_FEATURE_DIMS = {
@@ -247,8 +247,7 @@ class DatasetSim2D(InMemoryDataset):
                 indices_floor_joint[joint_type].append([0, idx_1])
                 preds_floor_joint[joint_type].append(preds_1)
 
-        JOINT_TYPES = ("fixed_joint", "revolute_joint", "prismatic_joint")
-        for i, joint_type in enumerate(JOINT_TYPES):
+        for i, joint_type in JOINT_INT_TO_STR.items():
             self._assign_edge_data(
                 data,
                 ("object", joint_type, "object"),

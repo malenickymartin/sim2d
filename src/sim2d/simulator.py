@@ -40,7 +40,7 @@ class Simulator(ABC):
         )
         self.init_gnn_path = init_gnn_path
 
-        self.num_steps = int(sim_time // dt + sim_time % dt)
+        self.num_steps = int(round(sim_time / dt))
         self.newton_iters = newton_iters
         self.gravity = gravity.to(self.device)
         self.dt = dt
@@ -253,7 +253,7 @@ class Simulator(ABC):
         }
         return merged
 
-    def update_gnn_data(self, state: torch.Tensor, constraints: torch.Tensor):
+    def create_gnn_data(self, state: torch.Tensor, constraints: torch.Tensor):
         gnn_data = HeteroData()
         gnn_data["object"].x = torch.zeros(
             (self.num_shapes, NODE_FEATURE_DIMS["object"]), dtype=torch.float32, device=self.device
@@ -271,7 +271,10 @@ class Simulator(ABC):
                 device=self.device,
             )
 
-        if self.floor is not None:
+        if (
+            self.floor is not None
+            or (constraints["neighbor_idx"][constraints["is_equality"]] == -1).any()
+        ):
             gnn_data["floor"].x = torch.zeros((1, 0), dtype=torch.float32, device=self.device)
         else:
             gnn_data["floor"].x = torch.zeros((0, 0), dtype=torch.float32, device=self.device)
@@ -446,7 +449,7 @@ class Simulator(ABC):
             state_guess[:, :3] += state[:, :3]
             state_guess[:, :3] += dt * self.gravity
         else:
-            gnn_data = self.update_gnn_data(state, constraints)
+            gnn_data = self.create_gnn_data(state, constraints)
             gnn_output = self.gnn(
                 gnn_data.x_dict, gnn_data.edge_index_dict, gnn_data.edge_attr_dict
             )

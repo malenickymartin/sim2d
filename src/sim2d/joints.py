@@ -54,6 +54,7 @@ class PrismaticJoint(Joint):
     ):
         super().__init__(child_idx, parent_idx, child_anchor, parent_anchor)
         self.axis = torch.as_tensor(axis, dtype=torch.float32)
+        self.axis = self.axis / torch.norm(self.axis)
 
     def to(self, device: torch.device):
         self.axis = self.axis.to(device)
@@ -128,22 +129,18 @@ def compute_joint_constraints(
         J1_x, J2_x = torch.zeros(3, device=device), torch.zeros(3, device=device)
         J1_x[:2] = n_x
         J1_x[2] = _perp(r_1).dot(n_x)
-        J1_x = J1_x / J1_x.norm()
         if shape_2:
             J2_x[:2] = -n_x
             J2_x[2] = _perp(r_2).dot(-n_x)
-            J2_x = J2_x / J2_x.norm()
         constraints.append((J1_x, J2_x, diff[0]))
 
         n_y = torch.tensor([0.0, 1.0], device=device)
         J1_y, J2_y = torch.zeros(3, device=device), torch.zeros(3, device=device)
         J1_y[:2] = n_y
         J1_y[2] = _perp(r_1).dot(n_y)
-        J1_y = J1_y / J1_y.norm()
         if shape_2:
             J2_y[:2] = -n_y
             J2_y[2] = _perp(r_2).dot(-n_y)
-            J2_y = J2_y / J2_y.norm()
         constraints.append((J1_y, J2_y, diff[1]))
 
     elif isinstance(joint, FixedJoint):
@@ -153,11 +150,9 @@ def compute_joint_constraints(
             J1, J2 = torch.zeros(3, device=device), torch.zeros(3, device=device)
             J1[:2] = n
             J1[2] = _perp(r_1).dot(n)
-            J1 = J1 / J1.norm()
             if shape_2:
                 J2[:2] = -n
                 J2[2] = _perp(r_2).dot(-n)
-                J2 = J2 / J2.norm()
             constraints.append((J1, J2, diff[i]))
 
         target_angle_1 = theta_1 + joint.child_target_rotation
@@ -182,12 +177,10 @@ def compute_joint_constraints(
         J1_p = torch.zeros(3, device=device)
         J1_p[:2] = perp_axis
         J1_p[2] = diff.dot(axis_world) + _perp(r_1).dot(perp_axis)
-        J1_p = J1_p / J1_p.norm()
         J2_p = torch.zeros(3, device=device)
         if shape_2:
             J2_p[:2] = -perp_axis
             J2_p[2] = _perp(r_2).dot(-perp_axis)
-            J2_p = J2_p / J2_p.norm()
         constraints.append((J1_p, J2_p, dist_perp))
 
     return constraints
