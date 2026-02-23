@@ -71,9 +71,9 @@ class DatasetSim2D(InMemoryDataset):
                     )  # cannot use last step, because we dont have prediction for it
         graphs = []
         for path_idx in tqdm(range(len(passes_paths))):
-            for step_idx in range(passes_steps[path_idx]):
-                with h5py.File(passes_paths[path_idx], "r") as f:
-                    config = f["init_config"]
+            with h5py.File(passes_paths[path_idx], "r") as f:
+                config = f["init_config"]
+                for step_idx in range(passes_steps[path_idx]):
                     step = f[f"step_{step_idx:04d}"]
                     step_next = f[f"step_{step_idx+1:04d}"]
                     graph = self.construct_graph(config, step, step_next)
@@ -167,7 +167,8 @@ class DatasetSim2D(InMemoryDataset):
             dist = step["contacts_data"]["distances"][i]
             if idx_2 != -1:
                 restitution = (
-                    config["shapes"]["restitutions"][idx_1] + config["shapes"]["restitutions"][i]
+                    config["shapes"]["restitutions"][idx_1]
+                    + config["shapes"]["restitutions"][idx_2]
                 ) / 2
                 attrs_object_object.append([J_1[0], J_1[1], J_1[2], dist, restitution])
                 attrs_object_object.append([J_2[0], J_2[1], J_2[2], dist, restitution])
@@ -182,7 +183,7 @@ class DatasetSim2D(InMemoryDataset):
                 object_lambda_counter[idx_1] += 1
             else:
                 restitution = (
-                    config["shapes"]["restitutions"][idx_1] + config["floor"]["restitution"]
+                    config["shapes"]["restitutions"][idx_1] + config["floor"]["restitution"][()]
                 ) / 2
                 attrs_floor_object.append([J_1[0], J_1[1], J_1[2], dist, restitution])
                 indices_floor_object.append([0, idx_1])

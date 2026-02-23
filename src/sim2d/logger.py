@@ -77,6 +77,8 @@ class HDF5Logger:
 
         if isinstance(data, torch.Tensor):
             data = data.detach().cpu().numpy()
+        elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], torch.Tensor):
+            data = torch.stack(data).detach().cpu().numpy()
 
         if name in group:
             del group[name]

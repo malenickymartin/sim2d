@@ -94,16 +94,19 @@ class GNNLoss(torch.nn.Module):
 
             bodies = edges.edge_index[1, edge_idxs]
             neighs = edges.edge_index[0, edge_idxs] if is_obj_obj else torch.full_like(bodies, -1)
-            preds_all = lambdas_dict[(src, name, dst)][edge_idxs]
+            if is_obj_obj:
+                preds_all = (
+                    lambdas_dict[(src, name, dst)][edge_idxs]
+                    + lambdas_dict[(src, name, dst)][edge_idxs + 1]
+                ) / 2.0
+            else:
+                preds_all = preds_all
             for k in range(num_constraints):
                 attr_offset = k * 4
                 J_body = edges.edge_attr[edge_idxs, attr_offset : attr_offset + 3]
                 dists = edges.edge_attr[edge_idxs, attr_offset + 3]
                 if is_obj_obj:
-                    if is_joint:
-                        J_neigh = edges.edge_attr[edge_idxs + 1, attr_offset : attr_offset + 3]
-                    else:
-                        J_neigh = edges.edge_attr[edge_idxs + 1, attr_offset : attr_offset + 3]
+                    J_neigh = edges.edge_attr[edge_idxs + 1, attr_offset : attr_offset + 3]
                 else:
                     J_neigh = torch.zeros_like(J_body)
                 preds = preds_all[:, k]
@@ -152,7 +155,7 @@ class GNNLoss(torch.nn.Module):
                 v
             )
 
-        res_flat = self.dummy_solver.resudial_fn(state, state_init, constraints)
+        res_flat = self.dummy_solver.residual_fn(state, state_init, constraints)
         res_unflat_shape = self.dummy_solver.state_shape(constraints)
         res_unflat = res_flat.view(res_unflat_shape)
         vel_res = res_unflat[:, :3]

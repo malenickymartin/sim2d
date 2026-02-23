@@ -116,13 +116,13 @@ def benchmark(dataset_root: str, model_name: str):
             SimGNN.solver.newton_iters = 0
 
             state_hybrid = SimHybrid.solver.step(0, state, contacts)
-            res_hybrid = torch.norm(Sim.solver.resudial_fn(state_hybrid, state, contacts)).item()
+            res_hybrid = torch.norm(Sim.solver.residual_fn(state_hybrid, state, contacts)).item()
 
             state_newton = SimNewton.solver.step(0, state, contacts)
-            res_newton = torch.norm(Sim.solver.resudial_fn(state_newton, state, contacts)).item()
+            res_newton = torch.norm(Sim.solver.residual_fn(state_newton, state, contacts)).item()
 
             state_gnn = SimGNN.solver.step(0, state, contacts)
-            res_gnn = torch.norm(Sim.solver.resudial_fn(state_gnn, state, contacts)).item()
+            res_gnn = torch.norm(Sim.solver.residual_fn(state_gnn, state, contacts)).item()
 
             res["hybrid"].append(res_hybrid)
             res["newton"].append(res_newton)

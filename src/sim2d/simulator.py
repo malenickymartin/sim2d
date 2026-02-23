@@ -259,7 +259,7 @@ class Simulator(ABC):
             (self.num_shapes, NODE_FEATURE_DIMS["object"]), dtype=torch.float32, device=self.device
         )
         for i in range(self.num_shapes):
-            gnn_data["object"].x[i][:] = torch.tensor(
+            gnn_data["object"].x[i][:] = torch.stack(
                 [
                     self.shapes[i].mass,
                     self.shapes[i].inertia,
@@ -267,9 +267,8 @@ class Simulator(ABC):
                     state[i][1],
                     torch.norm(state[i][:2]),
                     state[i][2],
-                ],
-                device=self.device,
-            )
+                ]
+            ).to(self.device)
 
         if (
             self.floor is not None
@@ -450,9 +449,10 @@ class Simulator(ABC):
             state_guess[:, :3] += dt * self.gravity
         else:
             gnn_data = self.create_gnn_data(state, constraints)
-            gnn_output = self.gnn(
-                gnn_data.x_dict, gnn_data.edge_index_dict, gnn_data.edge_attr_dict
-            )
+            with torch.no_grad():
+                gnn_output = self.gnn(
+                    gnn_data.x_dict, gnn_data.edge_index_dict, gnn_data.edge_attr_dict
+                )
             state_guess = self.state_from_gnn(gnn_output, constraints)
 
         return state_guess

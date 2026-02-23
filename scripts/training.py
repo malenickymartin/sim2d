@@ -105,13 +105,14 @@ def train(
                 "learning_rate": scheduler.get_last_lr()[0],
             }
         )
-        wandb.save(str(config["dataset_root"]))
         if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
             scheduler.step(val_loss["total_loss"])
         else:
             scheduler.step()
         if val_loss["total_loss"] < min_val_loss:
             min_val_loss = val_loss["total_loss"]
+            save_dir = config["dataset_root"] / "models"
+            save_dir.mkdir(parents=True, exist_ok=True)
             torch.save(model, config["dataset_root"] / "models" / config["model_name"])
 
 

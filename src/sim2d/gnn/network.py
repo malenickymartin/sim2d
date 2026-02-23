@@ -132,10 +132,13 @@ class InteractionNetwork(MessagePassing):
     def message(self, edge_attr):
         return edge_attr
 
-    def update(self, aggr_out, x):
+    def update(self, aggr_out, x, has_incoming=None):
         if isinstance(x, tuple):
             x = x[1]
-        return self.mlp_node(torch.cat([x, aggr_out], dim=-1)) + x
+        x_updated = self.mlp_node(torch.cat([x, aggr_out], dim=-1)) + x
+        if has_incoming is not None:
+            x_updated = torch.where(has_incoming.unsqueeze(-1), x_updated, x)
+        return x_updated
 
     def forward(
         self,
@@ -147,8 +150,15 @@ class InteractionNetwork(MessagePassing):
             size = (x[0].size(0), x[1].size(0))
         else:
             size = (x.size(0), x.size(0))
+
+        has_incoming = torch.zeros(size[1], dtype=torch.bool, device=edge_index.device)
+        if edge_index.numel() > 0:
+            has_incoming[edge_index[1]] = True
+
         edge_attr_updated = self.edge_updater(edge_index, x=x, edge_attr=edge_attr)
-        x_updated = self.propagate(edge_index, x=x, edge_attr=edge_attr_updated, size=size)
+        x_updated = self.propagate(
+            edge_index, x=x, edge_attr=edge_attr_updated, size=size, has_incoming=has_incoming
+        )
         return x_updated, edge_attr_updated
 
 
@@ -185,8 +195,8 @@ class Processor(nn.Module):
                 x_updated, edge_attr_updated = layer["_".join(edge_type)](x, edge_index, edge_attr)
                 edge_attr_dict[edge_type] = edge_attr_updated
                 x_res_aggr[dst_type] += x_updated - x_dict[dst_type]
-            for node_type, x_res_aggr in x_res_aggr.items():
-                x_dict[node_type] = x_dict[node_type] + x_res_aggr
+            for node_type, res_aggr in x_res_aggr.items():
+                x_dict[node_type] = x_dict[node_type] + res_aggr
         return x_dict, edge_attr_dict
 
 

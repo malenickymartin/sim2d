@@ -50,7 +50,7 @@ class EulerSolver:
         ), f"State shape is not correct. Expected: {self.state_shape(constraints)}, got {state.shape}."
         with self.logger.timed_block("newton_solve"):
             for i in range(self.newton_iters):
-                res_val: torch.Tensor = self.resudial_fn(state, state_init, constraints)
+                res_val: torch.Tensor = self.residual_fn(state, state_init, constraints)
                 if torch.norm(res_val) < self.atol:
                     self.logger.log_engine_data(
                         step_idx, i, state.shape, res_val.detach(), torch.Tensor(), torch.Tensor()
@@ -63,7 +63,7 @@ class EulerSolver:
                         with torch.enable_grad():
                             state_var = state.detach().requires_grad_(True)
                             J = torch.autograd.functional.jacobian(
-                                lambda z: self.resudial_fn(z, state_init, constraints), state_var
+                                lambda z: self.residual_fn(z, state_init, constraints), state_var
                             )
                             if J.dim() > 2:
                                 J = J.view(J.shape[0], -1)
@@ -81,7 +81,7 @@ class EulerSolver:
                     return state.detach()
         return state.detach()
 
-    def resudial_fn(self, state: torch.Tensor, state_init: torch.Tensor, constraints):
+    def residual_fn(self, state: torch.Tensor, state_init: torch.Tensor, constraints):
         res = torch.zeros_like(state)
         res[:, 3:] = state[:, 3:]
         res[:, :3] = state[:, :3] - state_init[:, :3] - self.gravity * self.dt
