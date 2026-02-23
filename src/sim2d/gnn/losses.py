@@ -100,7 +100,7 @@ class GNNLoss(torch.nn.Module):
                     + lambdas_dict[(src, name, dst)][edge_idxs + 1]
                 ) / 2.0
             else:
-                preds_all = preds_all
+                preds_all = lambdas_dict[(src, name, dst)][edge_idxs]
             for k in range(num_constraints):
                 attr_offset = k * 4
                 J_body = edges.edge_attr[edge_idxs, attr_offset : attr_offset + 3]
