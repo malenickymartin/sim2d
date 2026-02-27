@@ -113,7 +113,8 @@ def train(
             min_val_loss = val_loss["total_loss"]
             save_dir = config["dataset_root"] / "models"
             save_dir.mkdir(parents=True, exist_ok=True)
-            torch.save(model, config["dataset_root"] / "models" / config["model_name"])
+            if not config["model_name"] is None:
+                torch.save(model, config["dataset_root"] / "models" / config["model_name"])
 
 
 def main(config):
@@ -130,7 +131,9 @@ def main(config):
     train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], shuffle=False)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr_init"])
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.2, threshold=0.001)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=config["epochs"], eta_min=1e-6
+    )
     model.to(config["device"])
     wandb_group_name = config["wandb"].split("/") if not config["wandb"] is None else [""]
     wandb.init(
@@ -164,11 +167,11 @@ if __name__ == "__main__":
     parser.add_argument("--loss_type", type=str, default="residue_loss")
     parser.add_argument("--lr_init", type=float, default=1e-3)
     parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--epochs", type=int, default=300)
 
     parser.add_argument("--device", type=str, default=None)
-    parser.add_argument("--dataset_root", type=Path, default=Path("data/test_dataset/"))
-    parser.add_argument("--model_name", type=str, default="model.pt")
+    parser.add_argument("--dataset_root", type=Path, default=Path("data/one_step_merge_dataset/"))
+    parser.add_argument("--model_name", type=str, default=None)
     parser.add_argument("--wandb", type=str, default=None)
 
     args = parser.parse_args()
