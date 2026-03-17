@@ -14,10 +14,10 @@ from sim2d.logger import EngineLogger
 
 
 class SimulatorBenchmark(sim2d.Simulator):
-    def __init__(self, pass_path, init_gnn_path):
+    def __init__(self, pass_path):
         self.pass_path = pass_path
         self.pass_step = 0
-        super().__init__(0, init_gnn_path=init_gnn_path)
+        super().__init__(0)
 
     def build_model(self):
         with h5py.File(self.pass_path, "r") as f:
@@ -120,6 +120,7 @@ def plot_spaghetti(ax, data, label, color):
     ax.set_yscale("log")
     ax.set_xlabel("Newton Step")
     ax.set_ylabel("Residue Norm")
+    ax.set_xlim([0, 7])
     ax.grid(True, which="both", linestyle="--", alpha=0.5)
 
 
@@ -135,6 +136,7 @@ def plot_extended_tail(ax, data, label, color):
     ax.set_yscale("log")
     ax.set_xlabel("Newton Step")
     ax.set_ylabel("Residue Norm")
+    ax.set_xlim([0, 7])
     ax.grid(True, which="both", linestyle="--", alpha=0.5)
 
 
@@ -149,6 +151,7 @@ def plot_convergence_prob(ax, data, label, color, threshold=1e-6):
     ax.set_ylabel("% Converged")
     ax.set_xlabel("Newton Step")
     ax.set_ylim(0, 105)
+    ax.set_xlim([0, 7])
     ax.grid(True)
 
 
@@ -161,9 +164,13 @@ def run_benchmark(dataset_root: Path, model_name: str):
     log_hybrid.open()
     log_newton.open()
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    gnn = torch.load(model_path, map_location=device, weights_only=False)
+    gnn.eval()
+
     step_total = 0
     for pass_path in tqdm(test_dataset.iterdir()):
-        Sim = SimulatorBenchmark(pass_path, model_path)
+        Sim = SimulatorBenchmark(pass_path)
         for _ in range(Sim.num_steps):
             Sim.update()
             contacts, _ = Sim.collide()
@@ -175,10 +182,10 @@ def run_benchmark(dataset_root: Path, model_name: str):
 
             SimHybrid = deepcopy(Sim)
             SimHybrid.solver.logger = log_hybrid
+            SimHybrid.gnn = gnn
 
             SimNewton = deepcopy(Sim)
             SimNewton.solver.logger = log_newton
-            SimNewton.gnn = None
 
             SimHybrid.solver.step(step_total, state, contacts)
             SimNewton.solver.step(step_total, state, contacts)
@@ -192,7 +199,7 @@ def plot():
     hybrid_data = load_residues("_tmp/hybrid.h5")
     newton_data = load_residues("_tmp/newton.h5")
 
-    fig, axes = plt.subplots(3, 1, figsize=(18, 5), constrained_layout=True)
+    fig, axes = plt.subplots(3, 1, figsize=(18, 13), constrained_layout=True)
 
     plot_spaghetti(axes[0], hybrid_data, "Hybrid", "tab:blue")
     plot_spaghetti(axes[0], newton_data, "Newton", "tab:orange")
@@ -207,14 +214,14 @@ def plot():
     axes[2].legend()
 
     plt.suptitle("Comparison of Initialization Methods", fontsize=16)
-    plt.show()
+    plt.savefig("benchmark_res.png")
 
 
-def main(dataset_root, model_name, save_runs, plot_only):
+def main(dataset_root, model_name, keep_runs, plot_only):
     if not plot_only:
         run_benchmark(dataset_root, model_name)
     plot()
-    if not save_runs:
+    if not keep_runs:
         rmtree("_tmp")
 
 
@@ -222,7 +229,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Benchmark")
     parser.add_argument("--dataset_root", type=Path, default=Path("data/gnn_dataset"))
     parser.add_argument("--model_name", type=str, default="model.pt")
-    parser.add_argument("--save_runs", action="store_true", default=False)
+    parser.add_argument("--keep_runs", action="store_true", default=False)
     parser.add_argument("--plot_only", action="store_true", default=False)
     args = parser.parse_args()
-    main(args.dataset_root, args.model_name, args.save_runs, args.plot_only)
+    main(args.dataset_root, args.model_name, args.keep_runs, args.plot_only)
