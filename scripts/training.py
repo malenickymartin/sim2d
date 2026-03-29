@@ -12,6 +12,14 @@ import wandb
 from sim2d.gnn import GNNSim2D, DatasetSim2D, GNNLoss
 
 
+def inject_training_noise(data: HeteroData, noise_std: float):
+    if noise_std <= 0.0 or "object" not in data.node_types:
+        return
+    vel_idxs = (2, 3, 5)
+    noise = torch.randn_like(data["object"].x[:, vel_idxs]) * noise_std
+    data["object"].x[:, vel_idxs] += noise
+
+
 def train_epoch(
     model: GNNSim2D,
     loss_fn: GNNLoss,
@@ -20,6 +28,7 @@ def train_epoch(
     device: str,
     epoch: int,
     total_epochs: int,
+    noise_std: float = 0.0,
 ):
     model.train()
     total_losses = defaultdict(float)
@@ -27,6 +36,8 @@ def train_epoch(
     pbar = tqdm(loader, desc=f"Epoch {epoch+1}/{total_epochs}")
     for i, data in enumerate(pbar, 1):
         data: HeteroData = data.to(device)
+        if noise_std > 0.0:
+            inject_training_noise(data, noise_std)
         optimizer.zero_grad()
         states, lambdas = model(data.x_dict, data.edge_index_dict, data.edge_attr_dict)
         loss_dict = loss_fn(data, states, lambdas)
@@ -84,6 +95,7 @@ def train(
             config["device"],
             epoch,
             config["epochs"],
+            noise_std=config["noise_std"],
         )
         val_loss = validate_epoch(
             model,
@@ -169,6 +181,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--loss_type", type=str, default="residue_loss")
     parser.add_argument("--lr_init", type=float, default=1e-3)
+    parser.add_argument("--noise_std", type=float, default=3e-4)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=300)
 
