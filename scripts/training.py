@@ -121,13 +121,16 @@ def main(config):
     loss_fn = GNNLoss(config["loss_type"], config["device"])
     train_dataset = DatasetSim2D(root=config["dataset_root"] / "train_dataset")
     val_dataset = DatasetSim2D(root=config["dataset_root"] / "val_dataset")
-    model = GNNSim2D(
-        config["message_passes"],
-        config["hidden_dims"],
-        config["hidden_layers"],
-        config["normalize"],
-        stats=train_dataset.stats if config["normalize_input"] else None,
-    )
+    if config["load_model_path"] is None:
+        model = GNNSim2D(
+            config["message_passes"],
+            config["hidden_dims"],
+            config["hidden_layers"],
+            config["normalize"],
+            stats=train_dataset.stats if config["normalize_input"] else None,
+        )
+    else:
+        model = torch.load(config["load_model_path"], weights_only=False)
     train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], shuffle=False)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr_init"])
@@ -172,6 +175,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--dataset_root", type=Path, default=Path("data/one_step_merge_dataset/"))
     parser.add_argument("--model_name", type=str, default=None)
+    parser.add_argument("--load_model_path", type=str, default=None)
     parser.add_argument("--wandb", type=str, default=None)
 
     args = parser.parse_args()
