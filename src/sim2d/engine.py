@@ -45,6 +45,7 @@ class EulerSolver:
         state_init = state.clone()
         with self.logger.timed_block("initial_guess"):
             state: torch.Tensor = self.init_state_fn(state, constraints, self.dt).clone()
+            state = self.compute_lambdas_from_velocities(state, state_init, constraints)
         assert state.shape == self.state_shape(
             constraints
         ), f"State shape is not correct. Expected: {self.state_shape(constraints)}, got {state.shape}."
@@ -80,6 +81,42 @@ class EulerSolver:
                 if torch.norm(delta) < self.atol:
                     return state.detach()
         return state.detach()
+
+    def compute_lambdas_from_velocities(
+        self, state: torch.Tensor, state_init: torch.Tensor, constraints: dict
+    ) -> torch.Tensor:
+        if constraints["body_idx"].numel() == 0:
+            return state
+        n_shapes, _ = state.shape
+        body_idxs = constraints["body_idx"]
+        neighbor_idxs = constraints["neighbor_idx"]
+        local_idxs = constraints["local_idx"]
+        jacobians = constraints["jac"]
+        jacobians_neigh = constraints["jac_neigh"]
+        n_constraints = body_idxs.shape[0]
+
+        b = (state[:, :3] - state_init[:, :3] - self.gravity * self.dt).flatten()
+        A = torch.zeros(3 * n_shapes, n_constraints, device=self.device)
+        col_idxs = torch.arange(n_constraints, device=self.device)
+        inv_M = self.inv_masses[body_idxs]
+        for k in range(3):
+            A[body_idxs * 3 + k, col_idxs] = jacobians[:, k] * inv_M[:, k]
+
+        mask_neigh = neighbor_idxs != -1
+        if mask_neigh.any():
+            neigh_idxs = neighbor_idxs[mask_neigh]
+            inv_M_neigh = self.inv_masses[neigh_idxs]
+            col_neigh = col_idxs[mask_neigh]
+            for k in range(3):
+                A[neigh_idxs * 3 + k, col_neigh] = (
+                    jacobians_neigh[mask_neigh, k] * inv_M_neigh[:, k]
+                )
+
+        lambdas = torch.linalg.lstsq(A, b).solution
+
+        state = state.clone()
+        state[body_idxs, 3 + local_idxs] = lambdas
+        return state
 
     def residual_fn(self, state: torch.Tensor, state_init: torch.Tensor, constraints):
         res = torch.zeros_like(state)

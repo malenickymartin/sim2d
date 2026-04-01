@@ -3,5 +3,8 @@ data/*
 .vscode
 wandb/
 
+**/*.png
+**/*.jpg
+**/*.jpeg
 !**/.gitkeep
 **/*.egg-info
