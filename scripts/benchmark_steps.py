@@ -155,12 +155,12 @@ def plot_convergence_prob(ax, data, label, color, threshold=1e-6):
     ax.grid(True)
 
 
-def run_benchmark(dataset_root: Path, model_name: str):
+def run_benchmark(dataset_root: Path, model_name: str, tmp_dir_name: str):
     test_dataset = dataset_root / "test_dataset" / "raw"
     model_path = dataset_root / "models" / model_name
 
-    log_hybrid = EngineLogger(sim2d.LoggingConfig(False, False, True, "_tmp/hybrid.h5"))
-    log_newton = EngineLogger(sim2d.LoggingConfig(False, False, True, "_tmp/newton.h5"))
+    log_hybrid = EngineLogger(sim2d.LoggingConfig(False, False, True, f"{tmp_dir_name}/hybrid.h5"))
+    log_newton = EngineLogger(sim2d.LoggingConfig(False, False, True, f"{tmp_dir_name}/newton.h5"))
     log_hybrid.open()
     log_newton.open()
 
@@ -195,9 +195,9 @@ def run_benchmark(dataset_root: Path, model_name: str):
     log_hybrid.close()
 
 
-def plot():
-    hybrid_data = load_residues("_tmp/hybrid.h5")
-    newton_data = load_residues("_tmp/newton.h5")
+def plot(tmp_dir_name, plot_file_name):
+    hybrid_data = load_residues(f"{tmp_dir_name}/hybrid.h5")
+    newton_data = load_residues(f"{tmp_dir_name}/newton.h5")
 
     fig, axes = plt.subplots(3, 1, figsize=(18, 13), constrained_layout=True)
 
@@ -214,15 +214,17 @@ def plot():
     axes[2].legend()
 
     plt.suptitle("Comparison of Initialization Methods", fontsize=16)
-    plt.savefig("benchmark_res.png")
+    plt.savefig(plot_file_name)
 
 
 def main(dataset_root, model_name, keep_runs, plot_only):
+    tmp_dir_name = f"_tmp_{model_name.split(".")[0]}"
+    plot_file_name = f"_benchmark_{model_name.split(".")[0]}"
     if not plot_only:
-        run_benchmark(dataset_root, model_name)
-    plot()
+        run_benchmark(dataset_root, model_name, tmp_dir_name)
+    plot(tmp_dir_name, plot_file_name)
     if not keep_runs:
-        rmtree("_tmp")
+        rmtree(tmp_dir_name)
 
 
 if __name__ == "__main__":

@@ -89,17 +89,21 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, hidden_dims: int, hidden_layers: int):
         super().__init__()
-        self.mlp_nodes = nn.ModuleDict()
-        for key, out_dim in OUTPUT_FEATURE_DIMS.items():
-            if type(key) != str:
-                continue
-            self.mlp_nodes[key] = MLP(
-                hidden_dims,
-                out_dim,
-                hidden_dims,
-                hidden_layers,
-                False,
-            )
+        self.mlp_objects = MLP(
+            hidden_dims,
+            OUTPUT_FEATURE_DIMS["object"],
+            hidden_dims,
+            hidden_layers,
+            False,
+        )
+
+        self.mlp_joints = MLP(
+            hidden_dims,
+            OUTPUT_FEATURE_DIMS["joint_anchor"],
+            hidden_dims,
+            hidden_layers,
+            False,
+        )
 
         self.mlp_edges = nn.ModuleDict()
         for key, out_dim in OUTPUT_FEATURE_DIMS.items():
@@ -115,20 +119,18 @@ class Decoder(nn.Module):
             )
 
     def forward(self, x_dict: Dict[str, torch.Tensor], edge_attr_dict: Dict[Tuple, torch.Tensor]):
-        nodes_decoded = {}
-        for key, node_attr in x_dict.items():
-            if key in self.mlp_nodes:
-                nodes_decoded[key] = self.mlp_nodes[key](node_attr)
-        edges_decoded = {}
+        objects_decoded = self.mlp_objects(x_dict["object"])
+        joints_decoded = self.mlp_joints(x_dict["joint_anchor"])
+        lambdas_decoded = {}
         for edge_type, edge_attr in edge_attr_dict.items():
             edge_key = "_".join(edge_type)
             if edge_key in self.mlp_edges:
-                edges_decoded[edge_type] = self.mlp_edges[edge_key](edge_attr)
-        return nodes_decoded, edges_decoded
+                lambdas_decoded[edge_type] = self.mlp_edges[edge_key](edge_attr)
+        return objects_decoded, joints_decoded, lambdas_decoded
 
 
 class InteractionNetwork(MessagePassing):
-    def __init__(self, hidden_dims: int, hidden_layers: int, normalize: bool, aggr: str = "mean"):
+    def __init__(self, hidden_dims: int, hidden_layers: int, normalize: bool, aggr: str = "add"):
         super().__init__(aggr)
         self.mlp_node = MLP(2 * hidden_dims, hidden_dims, hidden_dims, hidden_layers, normalize)
         self.mlp_edge = MLP(3 * hidden_dims, hidden_dims, hidden_dims, hidden_layers, normalize)
@@ -170,16 +172,8 @@ class InteractionNetwork(MessagePassing):
 
 
 class Processor(nn.Module):
-    def __init__(
-        self,
-        message_passes: int,
-        hidden_dims: int,
-        hidden_layers: int,
-        normalize: bool,
-        repetitions: int = 1,
-    ):
+    def __init__(self, message_passes: int, hidden_dims: int, hidden_layers: int, normalize: bool):
         super().__init__()
-        self.repetitions = repetitions
         self.processor_layers = nn.ModuleList()
         for _ in range(message_passes):
             layer_dict = nn.ModuleDict()
@@ -189,7 +183,7 @@ class Processor(nn.Module):
                 )
             self.processor_layers.append(layer_dict)
 
-    def _run_layers(
+    def forward(
         self,
         x_dict: Dict[str, torch.Tensor],
         edge_index_dict: Dict[Tuple[str], torch.Tensor],
@@ -197,7 +191,6 @@ class Processor(nn.Module):
     ):
         for layer in self.processor_layers:
             x_res_aggr = {key: torch.zeros_like(x) for key, x in x_dict.items()}
-            x_count = {key: 0 for key in x_dict}
             for edge_type in edge_index_dict.keys():
                 src_type, _, dst_type = edge_type
                 edge_index = edge_index_dict[edge_type]
@@ -211,22 +204,8 @@ class Processor(nn.Module):
                 x_updated, edge_attr_updated = layer["_".join(edge_type)](x, edge_index, edge_attr)
                 edge_attr_dict[edge_type] = edge_attr_updated
                 x_res_aggr[dst_type] += x_updated - x_dict[dst_type]
-                x_count[dst_type] += 1
             for node_type, res_aggr in x_res_aggr.items():
-                count = x_count[node_type]
-                x_dict[node_type] = x_dict[node_type] + (
-                    res_aggr / count if count > 0 else res_aggr
-                )
-        return x_dict, edge_attr_dict
-
-    def forward(
-        self,
-        x_dict: Dict[str, torch.Tensor],
-        edge_index_dict: Dict[Tuple[str], torch.Tensor],
-        edge_attr_dict: Dict[Tuple[str], torch.Tensor],
-    ):
-        for _ in range(self.repetitions):
-            x_dict, edge_attr_dict = self._run_layers(x_dict, edge_index_dict, edge_attr_dict)
+                x_dict[node_type] = x_dict[node_type] + res_aggr
         return x_dict, edge_attr_dict
 
 
@@ -238,17 +217,14 @@ class GNNSim2D(nn.Module):
         hidden_layers: int,
         normalize: bool,
         stats: Dict[str, Any] = None,
-        repetitions: int = 1,
     ):
         super().__init__()
         self.encoder = Encoder(hidden_dims, hidden_layers, normalize, stats=stats)
-        self.processor = Processor(
-            message_passes, hidden_dims, hidden_layers, normalize, repetitions
-        )
+        self.processor = Processor(message_passes, hidden_dims, hidden_layers, normalize)
         self.decoder = Decoder(hidden_dims, hidden_layers)
 
     def forward(self, x_dict, edge_index_dict, edge_attr_dict):
         x_dict, edge_attr_dict = self.encoder(x_dict, edge_attr_dict)
         x_dict, edge_attr_dict = self.processor(x_dict, edge_index_dict, edge_attr_dict)
-        nodes_dict, edges_dict = self.decoder(x_dict, edge_attr_dict)
-        return nodes_dict, edges_dict
+        object_states, joints_decoded, lambdas_dict = self.decoder(x_dict, edge_attr_dict)
+        return object_states, joints_decoded, lambdas_dict

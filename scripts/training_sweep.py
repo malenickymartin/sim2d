@@ -29,8 +29,6 @@ def sweep_train():
         "lr_init": sweep_config.lr_init,
         "normalize": sweep_config.normalize,
         "normalize_input": sweep_config.normalize_input,
-        "optimizer": sweep_config.optimizer,
-        "weight_decay": sweep_config.weight_decay,
     }
 
     loss_fn = GNNLoss(config["loss_type"], config["device"])
@@ -47,35 +45,12 @@ def sweep_train():
 
     train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], shuffle=False)
-
-    if config["optimizer"] == "Adam":
-        optimizer = torch.optim.Adam(
-            model.parameters(), lr=config["lr_init"], weight_decay=config["weight_decay"]
-        )
-    elif config["optimizer"] == "AdamW":
-        optimizer = torch.optim.AdamW(
-            model.parameters(), lr=config["lr_init"], weight_decay=config["weight_decay"]
-        )
-    else:
-        optimizer = torch.optim.SGD(
-            model.parameters(),
-            momentum=0.9,
-            weight_decay=config["weight_decay"],
-            lr=config["lr_init"],
-        )
-
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr_init"])
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=config["epochs"], eta_min=1e-6
     )
 
     model.to(config["device"])
-
-    wandb.config.update(
-        {
-            "optimizer_type": optimizer.__class__.__name__,
-            "scheduler_type": scheduler.__class__.__name__,
-        }
-    )
 
     try:
         train(model, loss_fn, train_loader, val_loader, optimizer, scheduler, config)
@@ -97,8 +72,6 @@ if __name__ == "__main__":
             "message_passes": {"values": [2, 4, 8, 10]},
             "normalize": {"values": [True, False]},
             "normalize_input": {"values": [True, False]},
-            "optimizer": {"values": ["SGD", "Adam", "AdamW"]},
-            "weight_decay": {"values": [0.0, 1e-3, 1e-4, 1e-5]},
         },
     }
 
