@@ -52,7 +52,7 @@ class NodeNetwork(nn.Module):
         self.edge_types = edge_types
         self.hidden_dims = hidden_dims
         self.attention = nn.MultiheadAttention(hidden_dims, num_heads, batch_first=True)
-        self.mlp = MLP(hidden_dims, hidden_dims, hidden_dims, hidden_layers, normalize, False)
+        self.mlp = MLP(hidden_dims, hidden_dims, hidden_dims, hidden_layers, normalize)
 
     def forward(
         self,
