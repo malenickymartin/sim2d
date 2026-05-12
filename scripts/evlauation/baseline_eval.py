@@ -1,8 +1,3 @@
-"""
-Baseline evaluation: predicts input velocities unchanged and zero impulses.
-Reports the same weighted-average losses as validate_epoch in training.py.
-"""
-
 import argparse
 from collections import defaultdict
 from pathlib import Path
@@ -38,7 +33,6 @@ def evaluate(loss_fn, loader, device):
         for data in tqdm(loader, desc="Evaluating baseline"):
             data = data.to(device)
             object_states, lambdas_dict = baseline_predict(data, device)
-            # Call loss function directly (joints=None → joint loss omitted)
             loss_dict = loss_fn.loss(data, object_states, None, lambdas_dict)
             for k, (val, count) in loss_dict.items():
                 total_losses[k] += val.item() * count
