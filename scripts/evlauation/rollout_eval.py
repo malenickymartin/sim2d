@@ -171,9 +171,11 @@ def run_rollout(
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate GNN rollout accuracy")
-    parser.add_argument("--dataset_root", type=Path, default=None)
+    parser.add_argument(
+        "--dataset_root", type=Path, default=Path("data/longer_runs/dataset_articulated")
+    )
     parser.add_argument("--model_path", type=Path, default=None)
-    parser.add_argument("--num_steps", type=int, default=500)
+    parser.add_argument("--num_steps", type=int, default=300)
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument(
         "--cache_dir",
@@ -184,7 +186,7 @@ def main():
     parser.add_argument(
         "--stats_cache",
         type=Path,
-        default=Path("data/longer_runs/dataset_non_articulated/stats_res_new.npz"),
+        default=Path("data/longer_runs/dataset_non_articulated/stats_res_newest.npz"),
         help="Path to save/load aggregated per-step stats (.npz). Skips all rollout processing if it exists.",
     )
     args = parser.parse_args()
@@ -307,20 +309,29 @@ def main():
 
         max_steps = max(len(t) for t in trans_gt_per_run)
 
-        def per_step_stats(predictions, ground_truth, distance_normalization=False):
+        def per_step_stats(predictions, ground_truth, area_compute=False):
 
             normalization = [
-                [[1.0 for _ in range(len(ground_truth[i][j]))] for j in range(len(ground_truth[i]))]
+                [[0.0 for _ in range(len(ground_truth[i][j]))] for j in range(len(ground_truth[i]))]
+                for i in range(len(ground_truth))
+            ]
+            error_integ = [
+                [[0.0 for _ in range(len(ground_truth[i][j]))] for j in range(len(ground_truth[i]))]
                 for i in range(len(ground_truth))
             ]
             for run in range(len(ground_truth)):
                 for step in range(1, len(ground_truth[run])):
                     for obj in range(len(ground_truth[run][step])):
-                        if distance_normalization:
+                        if area_compute:
                             dist = np.linalg.norm(
                                 ground_truth[run][step][obj] - ground_truth[run][step - 1][obj]
                             )
                             normalization[run][step][obj] = normalization[run][step - 1][obj] + dist
+                            error_integ[run][step][obj] = error_integ[run][step - 1][
+                                obj
+                            ] + np.linalg.norm(
+                                ground_truth[run][step][obj] - predictions[run][step][obj]
+                            )
                         else:
                             normalization[run][step][obj] = np.linalg.norm(
                                 ground_truth[run][step][obj] - ground_truth[run][0][obj]
@@ -330,14 +341,16 @@ def main():
             for run in range(len(ground_truth)):
                 for step in range(len(ground_truth[run])):
                     for obj in range(len(ground_truth[run][step])):
-                        err = (
-                            np.linalg.norm(
-                                ground_truth[run][step][obj] - predictions[run][step][obj]
+                        if area_compute:
+                            errors_all[step].append(
+                                error_integ[run][step][obj]
+                                / max(normalization[run][step][obj], 1e-8)
                             )
-                            / normalization[run][step][obj]
-                        )
-
-                        errors_all[step].append(err)
+                        else:
+                            err = np.linalg.norm(
+                                ground_truth[run][step][obj] - predictions[run][step][obj]
+                            ) / max(normalization[run][step][obj], 1e-8)
+                            errors_all[step].append(err)
             errors = np.zeros(len(ground_truth[0]))
             percentile_25 = np.zeros(len(ground_truth[0]))
             percentile_75 = np.zeros(len(ground_truth[0]))
